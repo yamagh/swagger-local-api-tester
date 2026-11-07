@@ -514,9 +514,6 @@ pre.codeblock {
         <div class="main-sub" id="mainSub">swagger.json を読み込むと、ここでリクエストのテストができます</div>
       </div>
       <div style="display:flex; gap:.5rem;">
-        <button class="btn btn-sm" id="btnGlobalAuth" title="認証設定">🔑 認証</button>
-        <button class="btn btn-sm" id="btnClearAuth" title="保存された認証情報を削除">🗑 認証クリア</button>
-        <button class="btn btn-sm" id="btnGlobalServer" title="サーバー設定">🌐 サーバー</button>
         <button class="btn btn-sm" id="btnSettings" title="設定">⚙️ 設定</button>
       </div>
     </div>
@@ -659,12 +656,12 @@ pre.codeblock {
     <div class="modal-section">
       <div class="modal-section-title">サーバー</div>
       <div class="form-row">
-        <label>デフォルト URL</label>
+        <label>サーバー URL</label>
         <input type="url" id="setDefaultServer" placeholder="https://api.example.com/v1">
       </div>
     </div>
     <div class="modal-section">
-      <div class="modal-section-title">認証（デフォルト情報）</div>
+      <div class="modal-section-title">認証情報</div>
       <div class="form-row">
         <label>認証タイプ</label>
         <select id="setDefaultAuthType">
@@ -673,8 +670,11 @@ pre.codeblock {
           <option value="apikey">API Key</option>
           <option value="basic">Basic Auth</option>
         </select>
-        <small>値はリクエスト時に認証フォームから入力されます（保存しません）</small>
+        <small>リクエストのフォームは毎回これを初期値にします（フォームで入力した値は保存されません）</small>
       </div>
+      <div class="form-row hidden" id="setDefaultAuthBearer"><label>Token</label><input type="password" id="setDefaultBearer" placeholder="token"></div>
+      <div class="form-row hidden" id="setDefaultAuthApiKey"><label>API Key</label><input type="password" id="setDefaultApiKey" placeholder="api-key"></div>
+      <div class="form-row hidden" id="setDefaultAuthBasic"><label>Username</label><input type="text" id="setDefaultBasicUser" placeholder="username"><label style="margin-top:.4rem;">Password</label><input type="password" id="setDefaultBasicPass" placeholder="password"></div>
     </div>
     <div class="modal-section">
       <div class="modal-section-title">実行履歴</div>
@@ -685,7 +685,6 @@ pre.codeblock {
     </div>
     <div class="modal-actions">
       <button class="btn" id="btnClearDefaults">デフォルトをクリア</button>
-      <button class="btn btn-primary" id="btnApplyDefaults">デフォルトに適用</button>
     </div>
   </div>
 </div>
@@ -696,7 +695,6 @@ let spec = null;
 let selectedKey = null;
 let selectedGroup = null;
 let selectedEndpointFilter = null;
-let globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
 
 /* ===== C4: Endpoint Store ===== */
 const EndpointStore = {
@@ -863,7 +861,7 @@ function collectAuth() {
 
 /* Persistence (survive reload via LocalStorage) — C5: one adapter, one server concept */
 const STORAGE_KEYS = {
-  spec: 'swlt.spec', serverUrl: 'swlt.serverUrl', auth: 'swlt.auth',
+  spec: 'swlt.spec',
   specUrl: 'swlt.specUrl', history: 'swlt.history',
   defaultSpecUrl: 'swlt.defaultSpecUrl', defaultServer: 'swlt.defaultServer',
   defaultAuth: 'swlt.defaultAuth', specAuth: 'swlt.specAuth', historyMax: 'swlt.historyMax',
@@ -871,54 +869,8 @@ const STORAGE_KEYS = {
 function saveSpecToStorage(json) {
   Persistence.setJSON(STORAGE_KEYS.spec, json);
 }
-function saveServerToStorage() {
-  const su = document.getElementById('serverUrl');
-  if (su && su.value) Persistence.set(STORAGE_KEYS.serverUrl, su.value);
-}
-function saveAuthToStorage() {
-  Persistence.setJSON(STORAGE_KEYS.auth, globalAuth);
-}
-function clearAuthFromStorage() {
-  Persistence.remove(STORAGE_KEYS.auth);
-}
-function resetGlobalAuth() {
-  globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
-}
-function hasSavedAuth() {
-  const a = Persistence.getJSON(STORAGE_KEYS.auth);
-  if (!a) return false;
-  const type = a.type || 'none';
-  if (type === 'bearer' && a.bearer) return true;
-  if (type === 'apikey' && a.apiKey) return true;
-  if (type === 'basic' && (a.basicUser || a.basicPass)) return true;
-  return false;
-}
-function applyAuthToFields() {
-  authType.value = globalAuth.type;
-  document.getElementById('bearerToken').value = globalAuth.bearer;
-  document.getElementById('apiKeyValue').value = globalAuth.apiKey;
-  document.getElementById('basicUser').value = globalAuth.basicUser;
-  document.getElementById('basicPass').value = globalAuth.basicPass;
-  toggleAuth();
-}
-function syncAuthFieldsToGlobal() {
-  globalAuth.type = authType.value;
-  globalAuth.bearer = document.getElementById('bearerToken').value;
-  globalAuth.apiKey = document.getElementById('apiKeyValue').value;
-  globalAuth.basicUser = document.getElementById('basicUser').value;
-  globalAuth.basicPass = document.getElementById('basicPass').value;
-  saveAuthToStorage();
-}
 function restoreState() {
   try {
-    // Migrate old 'swlt.server' key to 'swlt.serverUrl' if present
-    const oldServer = Persistence.get('swlt.server');
-    if (oldServer !== null && Persistence.get(STORAGE_KEYS.serverUrl) === null) {
-      Persistence.set(STORAGE_KEYS.serverUrl, oldServer);
-      Persistence.remove('swlt.server');
-    }
-    const savedAuth = Persistence.get(STORAGE_KEYS.auth);
-    if (savedAuth) globalAuth = Object.assign({}, globalAuth, JSON.parse(savedAuth));
     const savedSpec = Persistence.getJSON(STORAGE_KEYS.spec);
     if (savedSpec) {
       loadSpec(savedSpec);
@@ -927,7 +879,6 @@ function restoreState() {
       const savedSpecUrl = Persistence.get(STORAGE_KEYS.specUrl);
       if (savedSpecUrl) loadSpecFromURL(savedSpecUrl, getSpecAuthHeaders());
     }
-    applyAuthToFields();
     const urlInput = document.getElementById('specUrlInput');
     if (urlInput) urlInput.value = Persistence.get(STORAGE_KEYS.specUrl) || '';
   } catch (e) {}
@@ -1094,14 +1045,11 @@ function selectEndpoint(key) {
   const tagContainer = document.getElementById('detailTags');
   tagContainer.innerHTML = (ep.op.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
 
-  // Server URL
-  const servers = spec.servers || (spec.host ? [{url: `https://${spec.host}${spec.basePath || ''}`}] : []);
-  const firstServer = servers[0]?.url || Persistence.get(STORAGE_KEYS.serverUrl) || '';
-  document.getElementById('serverUrl').value = (Persistence.get(STORAGE_KEYS.serverUrl) || firstServer).replace(/\/$/, '');
+  // Server URL: 設定値があれば初期値として利用、なければ空
+  document.getElementById('serverUrl').value = (Persistence.get(STORAGE_KEYS.defaultServer) || '').replace(/\/$/, '');
 
-  // Auth from spec security
-  const security = ep.op.security || spec.security || [];
-  updateAuthFromSpec(security);
+  // 認証情報: 設定値があれば初期値として利用、なければ空
+  applySettingsAuth();
 
   // Params
   renderParams(ep);
@@ -1186,25 +1134,14 @@ const authBearer = document.getElementById('authBearer');
 const authApiKey = document.getElementById('authApiKey');
 const authBasic = document.getElementById('authBasic');
 
-function updateAuthFromSpec(security) {
-  // Local Storage に保存済みの認証情報があれば、リクエスト設定に自動で適用する。
-  if (hasSavedAuth()) {
-    applyAuthToFields();
-    return;
-  }
-  // Simple heuristic: if security requirements exist, pre-select
-  if (!security || !security.length || Object.keys(security[0]).length === 0) {
-    authType.value = globalAuth.type;
-  } else {
-    const name = Object.keys(security[0])[0];
-    const def = (spec.components?.securitySchemes || spec.securityDefinitions || {})[name];
-    if (def) {
-      if (def.type === 'http' && def.scheme === 'bearer') authType.value = 'bearer';
-      else if (def.type === 'apiKey') authType.value = 'apikey';
-      else if (def.type === 'http' && def.scheme === 'basic') authType.value = 'basic';
-      else authType.value = 'none';
-    }
-  }
+function applySettingsAuth() {
+  // 設定モーダルで保存した認証情報をフォームの初期値として利用。無ければ空。
+  const a = Persistence.getJSON(STORAGE_KEYS.defaultAuth) || {};
+  authType.value = a.type || 'none';
+  document.getElementById('bearerToken').value = a.bearer || '';
+  document.getElementById('apiKeyValue').value = a.apiKey || '';
+  document.getElementById('basicUser').value = a.basicUser || '';
+  document.getElementById('basicPass').value = a.basicPass || '';
   toggleAuth();
 }
 
@@ -1215,48 +1152,6 @@ function toggleAuth() {
   authBasic.classList.toggle('hidden', v !== 'basic');
 }
 authType.addEventListener('change', toggleAuth);
-const authPanel = document.getElementById('authPanel');
-authPanel.addEventListener('input', syncAuthFieldsToGlobal);
-authPanel.addEventListener('change', syncAuthFieldsToGlobal);
-
-document.getElementById('btnGlobalAuth').addEventListener('click', () => {
-  const type = prompt('認証タイプを選択: none, bearer, apikey, basic', globalAuth.type);
-  if (!type) return;
-  globalAuth.type = type;
-  if (type === 'bearer') globalAuth.bearer = prompt('Bearer Token を入力', globalAuth.bearer) || globalAuth.bearer;
-  if (type === 'apikey') globalAuth.apiKey = prompt('API Key を入力', globalAuth.apiKey) || globalAuth.apiKey;
-  if (type === 'basic') {
-    globalAuth.basicUser = prompt('Username', globalAuth.basicUser) || globalAuth.basicUser;
-    globalAuth.basicPass = prompt('Password', globalAuth.basicPass) || globalAuth.basicPass;
-  }
-  authType.value = globalAuth.type;
-  if (globalAuth.type === 'bearer') document.getElementById('bearerToken').value = globalAuth.bearer;
-  if (globalAuth.type === 'apikey') document.getElementById('apiKeyValue').value = globalAuth.apiKey;
-  if (globalAuth.type === 'basic') {
-    document.getElementById('basicUser').value = globalAuth.basicUser;
-    document.getElementById('basicPass').value = globalAuth.basicPass;
-  }
-  toggleAuth();
-  saveAuthToStorage();
-  updateCurlPreview();
-});
-
-document.getElementById('btnClearAuth').addEventListener('click', () => {
-  if (!confirm('保存された認証情報を削除しますか？')) return;
-  clearAuthFromStorage();
-  resetGlobalAuth();
-  applyAuthToFields();
-  updateCurlPreview();
-});
-
-document.getElementById('btnGlobalServer').addEventListener('click', () => {
-  const url = prompt('ベースサーバー URL を入力', Persistence.get(STORAGE_KEYS.serverUrl) || '');
-  if (url === null) return;
-  const su = document.getElementById('serverUrl');
-  if (su) su.value = url.replace(/\/$/, '');
-  saveServerToStorage();
-  updateCurlPreview();
-});
 
 /* Tabs */
 document.querySelectorAll('.tab').forEach(tab => {
@@ -1370,7 +1265,6 @@ function updateCurlPreview() {
 // Update curl when inputs change
 document.addEventListener('input', e => {
   if (e.target.closest('#testerPanel')) updateCurlPreview();
-  if (e.target.id === 'serverUrl') saveServerToStorage();
 });
 
 document.getElementById('btnCopyCurl').addEventListener('click', () => {
@@ -1505,7 +1399,6 @@ function applyHistoryEntry(entry) {
     const target = entry.serverUrl.replace(/\/$/, '');
     if (su.value !== target && confirm('サーバー URL を ' + target + ' に変更しますか？')) {
       su.value = target;
-      saveServerToStorage();
     }
   }
   updateCurlPreview();
@@ -1518,6 +1411,21 @@ function toggleSpecAuth() {
   document.getElementById('setSpecAuthBearer').classList.toggle('hidden', v !== 'bearer');
   document.getElementById('setSpecAuthApiKey').classList.toggle('hidden', v !== 'apikey');
   document.getElementById('setSpecAuthBasic').classList.toggle('hidden', v !== 'basic');
+}
+function toggleDefaultAuth() {
+  const v = document.getElementById('setDefaultAuthType').value;
+  document.getElementById('setDefaultAuthBearer').classList.toggle('hidden', v !== 'bearer');
+  document.getElementById('setDefaultAuthApiKey').classList.toggle('hidden', v !== 'apikey');
+  document.getElementById('setDefaultAuthBasic').classList.toggle('hidden', v !== 'basic');
+}
+function saveDefaultAuth() {
+  Persistence.setJSON(STORAGE_KEYS.defaultAuth, {
+    type: document.getElementById('setDefaultAuthType').value,
+    bearer: document.getElementById('setDefaultBearer').value,
+    apiKey: document.getElementById('setDefaultApiKey').value,
+    basicUser: document.getElementById('setDefaultBasicUser').value,
+    basicPass: document.getElementById('setDefaultBasicPass').value,
+  });
 }
 // C5: settings use Persistence adapter
 function saveSpecAuth() {
@@ -1539,38 +1447,17 @@ function fillSettingsFromStorage() {
   document.getElementById('setSpecApiKey').value = specAuth.apiKey || '';
   document.getElementById('setSpecBasicUser').value = specAuth.basicUser || '';
   document.getElementById('setSpecBasicPass').value = specAuth.basicPass || '';
-  const defAuth = Persistence.getJSON(STORAGE_KEYS.defaultAuth);
-  document.getElementById('setDefaultAuthType').value = (defAuth && defAuth.type) || 'none';
+  const defAuth = Persistence.getJSON(STORAGE_KEYS.defaultAuth) || {};
+  document.getElementById('setDefaultAuthType').value = defAuth.type || 'none';
+  document.getElementById('setDefaultBearer').value = defAuth.bearer || '';
+  document.getElementById('setDefaultApiKey').value = defAuth.apiKey || '';
+  document.getElementById('setDefaultBasicUser').value = defAuth.basicUser || '';
+  document.getElementById('setDefaultBasicPass').value = defAuth.basicPass || '';
   toggleSpecAuth();
+  toggleDefaultAuth();
 }
 function openSettings() { fillSettingsFromStorage(); settingsModal.classList.add('open'); }
 function closeSettings() { settingsModal.classList.remove('open'); }
-function applyDefaults() {
-  let applied = false;
-  const specUrl = Persistence.get(STORAGE_KEYS.defaultSpecUrl);
-  if (specUrl) {
-    Persistence.set(STORAGE_KEYS.specUrl, specUrl);
-    const i = document.getElementById('specUrlInput'); if (i) i.value = specUrl;
-    applied = true;
-  }
-  const defServer = Persistence.get(STORAGE_KEYS.defaultServer);
-  if (defServer !== null) {
-    // C5: set serverUrl directly (no globalServer) and persist
-    const su = document.getElementById('serverUrl');
-    if (su && (selectedKey || spec)) su.value = defServer.replace(/\/$/, '');
-    Persistence.set(STORAGE_KEYS.serverUrl, defServer);
-    applied = true;
-  }
-  const defAuth = Persistence.getJSON(STORAGE_KEYS.defaultAuth);
-  if (defAuth && defAuth.type) {
-    globalAuth.type = defAuth.type;
-    saveAuthToStorage();
-    applyAuthToFields();
-    applied = true;
-  }
-  alert(applied ? 'デフォルト設定を適用しました' : '適用するデフォルト設定がありません');
-  closeSettings();
-}
 function clearDefaults() {
   if (!confirm('デフォルト設定をすべて削除しますか？')) return;
   Persistence.remove(STORAGE_KEYS.defaultSpecUrl);
@@ -1593,18 +1480,21 @@ document.getElementById('btnSettings').addEventListener('click', openSettings);
 document.getElementById('btnCloseSettings').addEventListener('click', closeSettings);
 settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings(); });
-document.getElementById('btnApplyDefaults').addEventListener('click', applyDefaults);
 document.getElementById('btnClearDefaults').addEventListener('click', clearDefaults);
 // C5: event handlers use Persistence adapter
 document.getElementById('setDefaultSpecUrl').addEventListener('input', e => Persistence.set(STORAGE_KEYS.defaultSpecUrl, e.target.value.trim()));
 document.getElementById('setDefaultServer').addEventListener('input', e => Persistence.set(STORAGE_KEYS.defaultServer, e.target.value.trim()));
 document.getElementById('setHistoryMax').addEventListener('input', e => { let n = parseInt(e.target.value, 10); if (isNaN(n)) n = 20; n = Math.max(1, Math.min(100, n)); Persistence.set(STORAGE_KEYS.historyMax, String(n)); });
-document.getElementById('setDefaultAuthType').addEventListener('change', e => Persistence.setJSON(STORAGE_KEYS.defaultAuth, { type: e.target.value }));
+document.getElementById('setDefaultAuthType').addEventListener('change', () => { toggleDefaultAuth(); saveDefaultAuth(); });
 document.getElementById('setSpecAuthType').addEventListener('change', e => { toggleSpecAuth(); saveSpecAuth(); });
 document.getElementById('setSpecBearer').addEventListener('input', saveSpecAuth);
 document.getElementById('setSpecApiKey').addEventListener('input', saveSpecAuth);
 document.getElementById('setSpecBasicUser').addEventListener('input', saveSpecAuth);
 document.getElementById('setSpecBasicPass').addEventListener('input', saveSpecAuth);
+document.getElementById('setDefaultBearer').addEventListener('input', saveDefaultAuth);
+document.getElementById('setDefaultApiKey').addEventListener('input', saveDefaultAuth);
+document.getElementById('setDefaultBasicUser').addEventListener('input', saveDefaultAuth);
+document.getElementById('setDefaultBasicPass').addEventListener('input', saveDefaultAuth);
 
 /* Keyboard shortcut */
 document.addEventListener('keydown', e => {
