@@ -835,6 +835,28 @@ const HistoryStore = {
   }
 };
 
+const History = {
+  record({ ep, server, req, params, auth, bodyText }, response) {
+    HistoryStore.add({
+      id: uuid(),
+      timestamp: new Date().toISOString(),
+      key: ep.key,
+      method: req.method,
+      path: ep.path,
+      serverUrl: server,
+      fullUrl: req.url,
+      group: groupTagOf(ep),
+      params: {
+        query: Object.fromEntries((params.query || []).filter(x => x.value).map(x => [x.name, x.value])),
+        path: Object.fromEntries((params.path || []).filter(x => x.value).map(x => [x.name, x.value])),
+        body: params.body || (['POST','PUT','PATCH'].includes(req.method) ? (bodyText || '') : ''),
+        auth: { type: auth.type },
+      },
+      response,
+    });
+  },
+};
+
 /* ===== DOM helpers for request assembly ===== */
 function collectParams() {
   const query = [], path = [];
@@ -849,17 +871,56 @@ function collectParams() {
   });
   return { query, path, body };
 }
-function collectAuth() {
-  return {
-    type: authType.value,
-    bearer: document.getElementById('bearerToken').value.trim(),
-    apiKey: document.getElementById('apiKeyValue').value.trim(),
-    basicUser: document.getElementById('basicUser').value.trim(),
-    basicPass: document.getElementById('basicPass').value.trim(),
-  };
-}
+const AuthForm = {
+  SCOPE: {
+    main:    { type: 'authType',           bearer: 'bearerToken',   apiKey: 'apiKeyValue',     basicUser: 'basicUser',         basicPass: 'basicPass',         panes: { bearer: 'authBearer',          apikey: 'authApiKey',          basic: 'authBasic' } },
+    spec:    { type: 'setSpecAuthType',    bearer: 'setSpecBearer',  apiKey: 'setSpecApiKey',    basicUser: 'setSpecBasicUser',  basicPass: 'setSpecBasicPass',  panes: { bearer: 'setSpecAuthBearer',  apikey: 'setSpecAuthApiKey',  basic: 'setSpecAuthBasic' } },
+    default: { type: 'setDefaultAuthType', bearer: 'setDefaultBearer', apiKey: 'setDefaultApiKey', basicUser: 'setDefaultBasicUser', basicPass: 'setDefaultBasicPass', panes: { bearer: 'setDefaultAuthBearer', apikey: 'setDefaultAuthApiKey', basic: 'setDefaultAuthBasic' } },
+  },
+  toggle(scope) {
+    const s = this.SCOPE[scope];
+    const v = document.getElementById(s.type).value;
+    Object.entries(s.panes).forEach(([type, paneId]) => {
+      document.getElementById(paneId).classList.toggle('hidden', v !== type);
+    });
+  },
+  read(scope) {
+    const s = this.SCOPE[scope];
+    return {
+      type: document.getElementById(s.type).value,
+      bearer: document.getElementById(s.bearer).value.trim(),
+      apiKey: document.getElementById(s.apiKey).value.trim(),
+      basicUser: document.getElementById(s.basicUser).value.trim(),
+      basicPass: document.getElementById(s.basicPass).value.trim(),
+    };
+  },
+  write(scope, auth) {
+    const s = this.SCOPE[scope];
+    document.getElementById(s.type).value = auth.type || 'none';
+    document.getElementById(s.bearer).value = auth.bearer || '';
+    document.getElementById(s.apiKey).value = auth.apiKey || '';
+    document.getElementById(s.basicUser).value = auth.basicUser || '';
+    document.getElementById(s.basicPass).value = auth.basicPass || '';
+    this.toggle(scope);
+  },
+  save(scope, key) {
+    Persistence.setJSON(key, this.read(scope));
+  },
+};
 
+function currentRequest() {
+  const ep = EndpointStore.byKey(selectedKey);
+  if (!ep) return null;
+  const server = document.getElementById('serverUrl').value.trim();
+  if (!server) return null;
+  const params = collectParams();
+  const auth = AuthForm.read('main');
+  const bodyText = document.getElementById('requestBody').value;
+  const req = RequestAssembler.build({ endpoint: ep, server, params, bodyText, auth });
+  return { ep, server, req, params, auth, bodyText };
+}
 /* Persistence (survive reload via LocalStorage) — C5: one adapter, one server concept */
+
 const STORAGE_KEYS = {
   spec: 'swlt.spec',
   specUrl: 'swlt.specUrl', history: 'swlt.history',
@@ -1049,7 +1110,7 @@ function selectEndpoint(key) {
   document.getElementById('serverUrl').value = (Persistence.get(STORAGE_KEYS.defaultServer) || '').replace(/\/$/, '');
 
   // 認証情報: 設定値があれば初期値として利用、なければ空
-  applySettingsAuth();
+  AuthForm.write('main', Persistence.getJSON(STORAGE_KEYS.defaultAuth) || {});
 
   // Params
   renderParams(ep);
@@ -1129,29 +1190,7 @@ function renderParams(ep) {
 }
 
 /* Auth */
-const authType = document.getElementById('authType');
-const authBearer = document.getElementById('authBearer');
-const authApiKey = document.getElementById('authApiKey');
-const authBasic = document.getElementById('authBasic');
-
-function applySettingsAuth() {
-  // 設定モーダルで保存した認証情報をフォームの初期値として利用。無ければ空。
-  const a = Persistence.getJSON(STORAGE_KEYS.defaultAuth) || {};
-  authType.value = a.type || 'none';
-  document.getElementById('bearerToken').value = a.bearer || '';
-  document.getElementById('apiKeyValue').value = a.apiKey || '';
-  document.getElementById('basicUser').value = a.basicUser || '';
-  document.getElementById('basicPass').value = a.basicPass || '';
-  toggleAuth();
-}
-
-function toggleAuth() {
-  const v = authType.value;
-  authBearer.classList.toggle('hidden', v !== 'bearer');
-  authApiKey.classList.toggle('hidden', v !== 'apikey');
-  authBasic.classList.toggle('hidden', v !== 'basic');
-}
-authType.addEventListener('change', toggleAuth);
+document.getElementById('authType').addEventListener('change', () => AuthForm.toggle('main'));
 
 /* Tabs */
 document.querySelectorAll('.tab').forEach(tab => {
@@ -1166,26 +1205,9 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 /* Send request */
 document.getElementById('btnSend').addEventListener('click', async () => {
-  const ep = EndpointStore.byKey(selectedKey);
-  if (!ep) return;
-  const serverUrl = document.getElementById('serverUrl').value.trim();
-  if (!serverUrl) { alert('サーバー URL を入力してください'); return; }
-  // C1: build request via RequestAssembler
-  const req = RequestAssembler.build({
-    endpoint: ep,
-    server: serverUrl,
-    params: collectParams(),
-    bodyText: document.getElementById('requestBody').value,
-    auth: collectAuth(),
-  });
-  // 実行履歴用スナップショット（認証値は保存しない）
-  const p = collectParams();
-  const historyParams = {
-    query: Object.fromEntries(p.query.filter(x => x.value).map(x => [x.name, x.value])),
-    path: Object.fromEntries(p.path.filter(x => x.value).map(x => [x.name, x.value])),
-    body: p.body || (['POST','PUT','PATCH'].includes(req.method) ? (document.getElementById('requestBody').value || '') : ''),
-    auth: { type: authType.value },
-  };
+  const cur = currentRequest();
+  if (!cur) { alert('サーバー URL を入力してください'); return; }
+  const { ep, server, req } = cur;
   const start = performance.now();
   try {
     const resp = await fetch(req.url, { method: req.method, headers: new Headers(req.headers), body: req.body });
@@ -1193,60 +1215,23 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     const text = await resp.text();
     let pretty = text;
     try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch(e){}
-    document.getElementById('responseEmpty').classList.add('hidden');
-    document.getElementById('responseContent').classList.remove('hidden');
-    const statusEl = document.getElementById('respStatus');
-    statusEl.textContent = resp.status + ' ' + resp.statusText;
-    statusEl.className = 'status-badge ' + (resp.ok ? 'status-ok' : (resp.status < 500 ? 'status-warn' : 'status-err'));
-    document.getElementById('respTime').textContent = `${elapsed} ms`;
-    document.getElementById('respBody').textContent = pretty;
     const headersObj = {};
     resp.headers.forEach((v, k) => { headersObj[k] = v; });
-    document.getElementById('respHeaders').textContent = JSON.stringify(headersObj, null, 2);
-    HistoryStore.add({
-      id: uuid(), timestamp: new Date().toISOString(),
-      key: ep.key,
-      method: req.method, path: ep.path, serverUrl, fullUrl: req.url,
-      group: groupTagOf(ep),
-      params: historyParams, auth: historyParams.auth,
-      response: { status: resp.status, statusText: resp.statusText, time: elapsed, body: text, headers: headersObj, error: '' },
-    });
+    renderResponse({ status: resp.status, statusText: resp.statusText, time: elapsed, body: pretty, headers: headersObj });
+    History.record(cur, { status: resp.status, statusText: resp.statusText, time: elapsed, body: text, headers: headersObj, error: '' });
     renderHistory();
   } catch (err) {
-    document.getElementById('responseEmpty').classList.add('hidden');
-    document.getElementById('responseContent').classList.remove('hidden');
-    const statusEl = document.getElementById('respStatus');
-    statusEl.textContent = 'Network Error';
-    statusEl.className = 'status-badge status-err';
-    document.getElementById('respTime').textContent = '';
-    document.getElementById('respBody').textContent = 'Error: ' + err.message + '\n\nヒント: CORS 制限や Mixed Content (HTTPS/HTTP) の可能性があります。';
-    document.getElementById('respHeaders').textContent = '';
-    HistoryStore.add({
-      id: uuid(), timestamp: new Date().toISOString(),
-      key: ep.key,
-      method: req.method, path: ep.path, serverUrl, fullUrl: req.url,
-      group: groupTagOf(ep),
-      params: historyParams, auth: historyParams.auth,
-      response: { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message },
-    });
+    renderResponse({ error: err.message });
+    History.record(cur, { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message });
     renderHistory();
   }
 });
   
 /* cURL */
 function buildCurl() {
-  const ep = EndpointStore.byKey(selectedKey);
-  if (!ep) return '';
-  const serverUrl = document.getElementById('serverUrl').value.trim();
-  if (!serverUrl) return '';
-  // C1: build request via RequestAssembler
-  const req = RequestAssembler.build({
-    endpoint: ep,
-    server: serverUrl,
-    params: collectParams(),
-    bodyText: document.getElementById('requestBody').value,
-    auth: collectAuth(),
-  });
+  const cur = currentRequest();
+  if (!cur) return '';
+  const { req } = cur;
   let lines = [`curl -X ${req.method} "${req.url}"`];
   if (req.curlAuth) lines.push('  ' + req.curlAuth);
   req.headers.forEach(([name, value]) => {
@@ -1328,6 +1313,25 @@ function statusClassFor(s) {
   if (!s) return 'hist-err';
   return s < 300 ? 'hist-ok' : (s < 500 ? 'hist-warn' : 'hist-err');
 }
+
+function renderResponse({ status, statusText, time, body, headers, error }) {
+  document.getElementById('responseEmpty').classList.add('hidden');
+  document.getElementById('responseContent').classList.remove('hidden');
+  const statusEl = document.getElementById('respStatus');
+  if (error) {
+    statusEl.textContent = 'Network Error';
+    statusEl.className = 'status-badge status-err';
+  } else {
+    statusEl.textContent = status + ' ' + statusText;
+    statusEl.className = 'status-badge ' + (status < 300 ? 'status-ok' : (status < 500 ? 'status-warn' : 'status-err'));
+  }
+  document.getElementById('respTime').textContent = time ? time + ' ms' : '';
+  document.getElementById('respBody').textContent = error
+    ? 'Error: ' + error + '\n\nヒント: CORS 制限や Mixed Content (HTTPS/HTTP) の可能性があります。'
+    : (body || '');
+  document.getElementById('respHeaders').textContent = headers ? JSON.stringify(headers, null, 2) : '';
+}
+
 // C3: renderHistory uses HistoryStore for storage + filter (pure), only this function touches DOM
 function renderHistory() {
   const list = document.getElementById('historyList');
@@ -1406,64 +1410,46 @@ function applyHistoryEntry(entry) {
 
 /* ===== Feature 4: settings modal (T11/T12) ===== */
 const settingsModal = document.getElementById('settingsModal');
-function toggleSpecAuth() {
-  const v = document.getElementById('setSpecAuthType').value;
-  document.getElementById('setSpecAuthBearer').classList.toggle('hidden', v !== 'bearer');
-  document.getElementById('setSpecAuthApiKey').classList.toggle('hidden', v !== 'apikey');
-  document.getElementById('setSpecAuthBasic').classList.toggle('hidden', v !== 'basic');
-}
-function toggleDefaultAuth() {
-  const v = document.getElementById('setDefaultAuthType').value;
-  document.getElementById('setDefaultAuthBearer').classList.toggle('hidden', v !== 'bearer');
-  document.getElementById('setDefaultAuthApiKey').classList.toggle('hidden', v !== 'apikey');
-  document.getElementById('setDefaultAuthBasic').classList.toggle('hidden', v !== 'basic');
-}
-function saveDefaultAuth() {
-  Persistence.setJSON(STORAGE_KEYS.defaultAuth, {
-    type: document.getElementById('setDefaultAuthType').value,
-    bearer: document.getElementById('setDefaultBearer').value,
-    apiKey: document.getElementById('setDefaultApiKey').value,
-    basicUser: document.getElementById('setDefaultBasicUser').value,
-    basicPass: document.getElementById('setDefaultBasicPass').value,
-  });
-}
-// C5: settings use Persistence adapter
-function saveSpecAuth() {
-  Persistence.setJSON(STORAGE_KEYS.specAuth, {
-    type: document.getElementById('setSpecAuthType').value,
-    bearer: document.getElementById('setSpecBearer').value,
-    apiKey: document.getElementById('setSpecApiKey').value,
-    basicUser: document.getElementById('setSpecBasicUser').value,
-    basicPass: document.getElementById('setSpecBasicPass').value,
-  });
-}
-function fillSettingsFromStorage() {
-  document.getElementById('setDefaultSpecUrl').value = Persistence.get(STORAGE_KEYS.defaultSpecUrl) || '';
-  document.getElementById('setDefaultServer').value = Persistence.get(STORAGE_KEYS.defaultServer) || '';
-  document.getElementById('setHistoryMax').value = String(HistoryStore.max());
-  const specAuth = getSpecAuth();
-  document.getElementById('setSpecAuthType').value = specAuth.type || 'none';
-  document.getElementById('setSpecBearer').value = specAuth.bearer || '';
-  document.getElementById('setSpecApiKey').value = specAuth.apiKey || '';
-  document.getElementById('setSpecBasicUser').value = specAuth.basicUser || '';
-  document.getElementById('setSpecBasicPass').value = specAuth.basicPass || '';
-  const defAuth = Persistence.getJSON(STORAGE_KEYS.defaultAuth) || {};
-  document.getElementById('setDefaultAuthType').value = defAuth.type || 'none';
-  document.getElementById('setDefaultBearer').value = defAuth.bearer || '';
-  document.getElementById('setDefaultApiKey').value = defAuth.apiKey || '';
-  document.getElementById('setDefaultBasicUser').value = defAuth.basicUser || '';
-  document.getElementById('setDefaultBasicPass').value = defAuth.basicPass || '';
-  toggleSpecAuth();
-  toggleDefaultAuth();
-}
-function openSettings() { fillSettingsFromStorage(); settingsModal.classList.add('open'); }
+
+const Settings = {
+  BINDINGS: [
+    { id: 'setDefaultSpecUrl',  event: 'input',  save: v => Persistence.set(STORAGE_KEYS.defaultSpecUrl, v.trim()) },
+    { id: 'setDefaultServer',   event: 'input',  save: v => Persistence.set(STORAGE_KEYS.defaultServer, v.trim()) },
+    { id: 'setHistoryMax',      event: 'input',  save: v => { let n = parseInt(v, 10); if (isNaN(n)) n = 20; n = Math.max(1, Math.min(100, n)); Persistence.set(STORAGE_KEYS.historyMax, String(n)); } },
+    { id: 'setDefaultAuthType', event: 'change', save: () => { AuthForm.toggle('default'); AuthForm.save('default', STORAGE_KEYS.defaultAuth); } },
+    { id: 'setSpecAuthType',    event: 'change', save: () => { AuthForm.toggle('spec'); AuthForm.save('spec', STORAGE_KEYS.specAuth); } },
+    { id: 'setSpecBearer',      event: 'input',  save: () => AuthForm.save('spec', STORAGE_KEYS.specAuth) },
+    { id: 'setSpecApiKey',      event: 'input',  save: () => AuthForm.save('spec', STORAGE_KEYS.specAuth) },
+    { id: 'setSpecBasicUser',   event: 'input',  save: () => AuthForm.save('spec', STORAGE_KEYS.specAuth) },
+    { id: 'setSpecBasicPass',   event: 'input',  save: () => AuthForm.save('spec', STORAGE_KEYS.specAuth) },
+    { id: 'setDefaultBearer',    event: 'input',  save: () => AuthForm.save('default', STORAGE_KEYS.defaultAuth) },
+    { id: 'setDefaultApiKey',    event: 'input',  save: () => AuthForm.save('default', STORAGE_KEYS.defaultAuth) },
+    { id: 'setDefaultBasicUser', event: 'input',  save: () => AuthForm.save('default', STORAGE_KEYS.defaultAuth) },
+    { id: 'setDefaultBasicPass', event: 'input',  save: () => AuthForm.save('default', STORAGE_KEYS.defaultAuth) },
+  ],
+  wire() {
+    this.BINDINGS.forEach(b => {
+      const el = document.getElementById(b.id);
+      if (el) el.addEventListener(b.event, e => b.save(e.target.value));
+    });
+  },
+  load() {
+    document.getElementById('setDefaultSpecUrl').value = Persistence.get(STORAGE_KEYS.defaultSpecUrl) || '';
+    document.getElementById('setDefaultServer').value = Persistence.get(STORAGE_KEYS.defaultServer) || '';
+    document.getElementById('setHistoryMax').value = String(HistoryStore.max());
+    AuthForm.write('spec', Persistence.getJSON(STORAGE_KEYS.specAuth) || {});
+    AuthForm.write('default', Persistence.getJSON(STORAGE_KEYS.defaultAuth) || {});
+  },
+};
+
+function openSettings() { Settings.load(); settingsModal.classList.add('open'); }
 function closeSettings() { settingsModal.classList.remove('open'); }
 function clearDefaults() {
   if (!confirm('デフォルト設定をすべて削除しますか？')) return;
   Persistence.remove(STORAGE_KEYS.defaultSpecUrl);
   Persistence.remove(STORAGE_KEYS.defaultServer);
   Persistence.remove(STORAGE_KEYS.defaultAuth);
-  fillSettingsFromStorage();
+  Settings.load();
 }
 
 /* ===== wiring ===== */
@@ -1481,20 +1467,7 @@ document.getElementById('btnCloseSettings').addEventListener('click', closeSetti
 settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings(); });
 document.getElementById('btnClearDefaults').addEventListener('click', clearDefaults);
-// C5: event handlers use Persistence adapter
-document.getElementById('setDefaultSpecUrl').addEventListener('input', e => Persistence.set(STORAGE_KEYS.defaultSpecUrl, e.target.value.trim()));
-document.getElementById('setDefaultServer').addEventListener('input', e => Persistence.set(STORAGE_KEYS.defaultServer, e.target.value.trim()));
-document.getElementById('setHistoryMax').addEventListener('input', e => { let n = parseInt(e.target.value, 10); if (isNaN(n)) n = 20; n = Math.max(1, Math.min(100, n)); Persistence.set(STORAGE_KEYS.historyMax, String(n)); });
-document.getElementById('setDefaultAuthType').addEventListener('change', () => { toggleDefaultAuth(); saveDefaultAuth(); });
-document.getElementById('setSpecAuthType').addEventListener('change', e => { toggleSpecAuth(); saveSpecAuth(); });
-document.getElementById('setSpecBearer').addEventListener('input', saveSpecAuth);
-document.getElementById('setSpecApiKey').addEventListener('input', saveSpecAuth);
-document.getElementById('setSpecBasicUser').addEventListener('input', saveSpecAuth);
-document.getElementById('setSpecBasicPass').addEventListener('input', saveSpecAuth);
-document.getElementById('setDefaultBearer').addEventListener('input', saveDefaultAuth);
-document.getElementById('setDefaultApiKey').addEventListener('input', saveDefaultAuth);
-document.getElementById('setDefaultBasicUser').addEventListener('input', saveDefaultAuth);
-document.getElementById('setDefaultBasicPass').addEventListener('input', saveDefaultAuth);
+Settings.wire();
 
 /* Keyboard shortcut */
 document.addEventListener('keydown', e => {
