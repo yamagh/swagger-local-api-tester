@@ -586,6 +586,19 @@ function clearAuthFromStorage() {
 function resetGlobalAuth() {
   globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
 }
+function hasSavedAuth() {
+  // 認証情報が LocalStorage に保存済みか（選択された認証タイプが実データと一致している場合のみ）。
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.auth);
+    if (!saved) return false;
+    const a = JSON.parse(saved) || {};
+    const type = a.type || 'none';
+    if (type === 'bearer' && a.bearer) return true;
+    if (type === 'apikey' && a.apiKey) return true;
+    if (type === 'basic' && (a.basicUser || a.basicPass)) return true;
+    return false;
+  } catch (e) { return false; }
+}
 function applyAuthToFields() {
   authType.value = globalAuth.type;
   document.getElementById('bearerToken').value = globalAuth.bearer;
@@ -841,6 +854,11 @@ const authApiKey = document.getElementById('authApiKey');
 const authBasic = document.getElementById('authBasic');
 
 function updateAuthFromSpec(security) {
+  // Local Storage に保存済みの認証情報があれば、リクエスト設定に自動で適用する。
+  if (hasSavedAuth()) {
+    applyAuthToFields();
+    return;
+  }
   // Simple heuristic: if security requirements exist, pre-select
   if (!security || !security.length || Object.keys(security[0]).length === 0) {
     authType.value = globalAuth.type;
