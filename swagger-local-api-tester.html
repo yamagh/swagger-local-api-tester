@@ -693,51 +693,205 @@ pre.codeblock {
 <script>
 /* State */
 let spec = null;
-let endpoints = [];
 let selectedKey = null;
 let selectedGroup = null;
 let selectedEndpointFilter = null;
 let globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
-let globalServer = '';
 
-/* Persistence (survive reload via LocalStorage) */
+/* ===== C4: Endpoint Store ===== */
+const EndpointStore = {
+  _list: [],
+  clear() { this._list.length = 0; },
+  add(ep) { this._list.push(ep); },
+  byKey(key) { return this._list.find(e => e.key === key); },
+  all() { return this._list; },
+  get length() { return this._list.length; },
+  makeKey(method, path) { return method + ' ' + path; },
+};
+let endpoints = EndpointStore._list; // backward-compat reference
+
+/* ===== C2: Auth Materializer ===== */
+const Auth = {
+  /**
+   * materialize(auth, spec?) → { kind, header?, query? }
+   * auth = { type, bearer, apiKey, basicUser, basicPass }
+   * Owns the type→header/query mapping for all auth kinds.
+   */
+  materialize(auth, spec) {
+    const type = auth.type || 'none';
+    if (type === 'bearer' && auth.bearer) {
+      return { kind: 'bearer', header: { name: 'Authorization', value: 'Bearer ' + auth.bearer } };
+    }
+    if (type === 'basic' && auth.basicUser) {
+      const hdr = 'Basic ' + btoa(unescape(encodeURIComponent(auth.basicUser + ':' + (auth.basicPass || ''))));
+      return { kind: 'basic', user: auth.basicUser, pass: auth.basicPass || '', header: { name: 'Authorization', value: hdr } };
+    }
+    if (type === 'apikey' && auth.apiKey) {
+      const schemes = (spec && (spec.components?.securitySchemes || spec.securityDefinitions)) || {};
+      const scheme = Object.values(schemes).find(s => s.type === 'apiKey');
+      if (scheme && scheme.in === 'query') {
+        return { kind: 'apikey', query: { name: scheme.name || 'api_key', value: auth.apiKey } };
+      }
+      const name = (scheme && scheme.in === 'header') ? (scheme.name || 'X-API-Key') : 'X-API-Key';
+      return { kind: 'apikey', header: { name, value: auth.apiKey } };
+    }
+    return { kind: 'none' };
+  }
+};
+
+/* ===== C5: Persistence Adapter ===== */
+const Persistence = {
+  get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch (e) {} },
+  getJSON(key) { try { const raw = this.get(key); return raw ? JSON.parse(raw) : null; } catch (e) { return null; } },
+  setJSON(key, value) { try { this.set(key, JSON.stringify(value)); } catch (e) {} },
+  remove(key) { try { localStorage.removeItem(key); } catch (e) {} },
+};
+
+/* ===== C1: Request Assembler ===== */
+const RequestAssembler = {
+  /**
+   * build(cfg) → { url, method, headers, body, curlAuth }
+   * cfg = { endpoint, server, params, bodyText, auth }
+   * params = { query: [{name, value}], path: [{name, value}], body: string|null }
+   * auth = { type, bearer, apiKey, basicUser, basicPass }
+   */
+  build(cfg) {
+    let url = cfg.server + cfg.endpoint.path;
+    const method = cfg.endpoint.method;
+    const headers = [['Accept', 'application/json']];
+    let body = undefined;
+
+    // Auth materialization
+    const authMat = Auth.materialize(cfg.auth, spec);
+    if (authMat.header) headers.push([authMat.header.name, authMat.header.value]);
+
+    // Params
+    const query = new URLSearchParams();
+    const pathValues = {};
+    let bodyParamText = null;
+    (cfg.params?.query || []).forEach(p => { if (p.value) query.append(p.name, p.value); });
+    (cfg.params?.path || []).forEach(p => { if (p.value) pathValues[p.name] = encodeURIComponent(p.value); });
+    if (cfg.params?.body) bodyParamText = cfg.params.body;
+
+    // Auth query params (e.g. apikey in query position)
+    if (authMat.query) query.append(authMat.query.name, authMat.query.value);
+
+    // Path substitution
+    Object.entries(pathValues).forEach(([k, v]) => {
+      url = url.replace('{' + k + '}', v);
+    });
+
+    // Query string
+    const qs = query.toString();
+    if (qs) url += (url.includes('?') ? '&' : '?') + qs;
+
+    // Body
+    if (['POST','PUT','PATCH'].includes(method)) {
+      const bodyText = (bodyParamText || cfg.bodyText || '').trim();
+      if (bodyText) {
+        headers.push(['Content-Type', 'application/json']);
+        body = bodyText;
+      }
+    }
+
+    // curl basic-auth flag
+    let curlAuth = '';
+    if (authMat.kind === 'basic' && authMat.user) {
+      curlAuth = `-u "${authMat.user}:${authMat.pass}"`;
+    }
+
+    return { url, method, headers, body, curlAuth };
+  }
+};
+
+/* ===== C3: History Store ===== */
+// C3: HistoryStore — storage + filter (pure), apply is the only DOM seam
+// C5: all I/O goes through Persistence adapter
+const HistoryStore = {
+  get() {
+    const raw = Persistence.get(STORAGE_KEYS.history);
+    try { return raw ? JSON.parse(raw).slice().reverse() : []; } catch (e) { return []; }
+  },
+  add(entry) {
+    let list = [];
+    const raw = Persistence.get(STORAGE_KEYS.history);
+    if (raw) { try { list = JSON.parse(raw); } catch (e) {} }
+    list.push(entry);
+    const max = this.max();
+    while (list.length > max) list.shift();
+    Persistence.setJSON(STORAGE_KEYS.history, list);
+  },
+  clear() {
+    Persistence.remove(STORAGE_KEYS.history);
+  },
+  max() {
+    const n = parseInt(Persistence.get(STORAGE_KEYS.historyMax) || '', 10);
+    return (n && n >= 1 && n <= 100) ? n : 20;
+  },
+  /** filter(entries, { group, endpoint }) — pure predicate, no DOM */
+  filter(entries, opts) {
+    if (opts.endpoint) return entries.filter(e => (e.method + ' ' + e.path) === opts.endpoint);
+    if (opts.group) return entries.filter(e => groupOfEntry(e) === opts.group);
+    return entries;
+  }
+};
+
+/* ===== DOM helpers for request assembly ===== */
+function collectParams() {
+  const query = [], path = [];
+  let body = null;
+  document.querySelectorAll('#paramsContainer [data-in]').forEach(el => {
+    const pin = el.dataset.in;
+    const name = el.dataset.name;
+    const val = el.value;
+    if (pin === 'query') query.push({ name, value: val });
+    if (pin === 'path') path.push({ name, value: val });
+    if (pin === 'body') body = val;
+  });
+  return { query, path, body };
+}
+function collectAuth() {
+  return {
+    type: authType.value,
+    bearer: document.getElementById('bearerToken').value.trim(),
+    apiKey: document.getElementById('apiKeyValue').value.trim(),
+    basicUser: document.getElementById('basicUser').value.trim(),
+    basicPass: document.getElementById('basicPass').value.trim(),
+  };
+}
+
+/* Persistence (survive reload via LocalStorage) — C5: one adapter, one server concept */
 const STORAGE_KEYS = {
-  spec: 'swlt.spec', server: 'swlt.server', serverUrl: 'swlt.serverUrl', auth: 'swlt.auth',
+  spec: 'swlt.spec', serverUrl: 'swlt.serverUrl', auth: 'swlt.auth',
   specUrl: 'swlt.specUrl', history: 'swlt.history',
   defaultSpecUrl: 'swlt.defaultSpecUrl', defaultServer: 'swlt.defaultServer',
   defaultAuth: 'swlt.defaultAuth', specAuth: 'swlt.specAuth', historyMax: 'swlt.historyMax',
 };
 function saveSpecToStorage(json) {
-  try { localStorage.setItem(STORAGE_KEYS.spec, JSON.stringify(json)); } catch (e) {}
+  Persistence.setJSON(STORAGE_KEYS.spec, json);
 }
 function saveServerToStorage() {
-  try {
-    localStorage.setItem(STORAGE_KEYS.server, globalServer || '');
-    const su = document.getElementById('serverUrl');
-    if (su && su.value) localStorage.setItem(STORAGE_KEYS.serverUrl, su.value);
-  } catch (e) {}
+  const su = document.getElementById('serverUrl');
+  if (su && su.value) Persistence.set(STORAGE_KEYS.serverUrl, su.value);
 }
 function saveAuthToStorage() {
-  try { localStorage.setItem(STORAGE_KEYS.auth, JSON.stringify(globalAuth)); } catch (e) {}
+  Persistence.setJSON(STORAGE_KEYS.auth, globalAuth);
 }
 function clearAuthFromStorage() {
-  try { localStorage.removeItem(STORAGE_KEYS.auth); } catch (e) {}
+  Persistence.remove(STORAGE_KEYS.auth);
 }
 function resetGlobalAuth() {
   globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
 }
 function hasSavedAuth() {
-  // 認証情報が LocalStorage に保存済みか（選択された認証タイプが実データと一致している場合のみ）。
-  try {
-    const saved = localStorage.getItem(STORAGE_KEYS.auth);
-    if (!saved) return false;
-    const a = JSON.parse(saved) || {};
-    const type = a.type || 'none';
-    if (type === 'bearer' && a.bearer) return true;
-    if (type === 'apikey' && a.apiKey) return true;
-    if (type === 'basic' && (a.basicUser || a.basicPass)) return true;
-    return false;
-  } catch (e) { return false; }
+  const a = Persistence.getJSON(STORAGE_KEYS.auth);
+  if (!a) return false;
+  const type = a.type || 'none';
+  if (type === 'bearer' && a.bearer) return true;
+  if (type === 'apikey' && a.apiKey) return true;
+  if (type === 'basic' && (a.basicUser || a.basicPass)) return true;
+  return false;
 }
 function applyAuthToFields() {
   authType.value = globalAuth.type;
@@ -757,21 +911,25 @@ function syncAuthFieldsToGlobal() {
 }
 function restoreState() {
   try {
-    const savedServer = localStorage.getItem(STORAGE_KEYS.server);
-    if (savedServer !== null) globalServer = savedServer;
-    const savedAuth = localStorage.getItem(STORAGE_KEYS.auth);
+    // Migrate old 'swlt.server' key to 'swlt.serverUrl' if present
+    const oldServer = Persistence.get('swlt.server');
+    if (oldServer !== null && Persistence.get(STORAGE_KEYS.serverUrl) === null) {
+      Persistence.set(STORAGE_KEYS.serverUrl, oldServer);
+      Persistence.remove('swlt.server');
+    }
+    const savedAuth = Persistence.get(STORAGE_KEYS.auth);
     if (savedAuth) globalAuth = Object.assign({}, globalAuth, JSON.parse(savedAuth));
-    const savedSpec = localStorage.getItem(STORAGE_KEYS.spec);
+    const savedSpec = Persistence.getJSON(STORAGE_KEYS.spec);
     if (savedSpec) {
-      loadSpec(JSON.parse(savedSpec));
+      loadSpec(savedSpec);
     } else {
       // spec 未保持時のみ、設定された spec URL から自動取得
-      const savedSpecUrl = localStorage.getItem(STORAGE_KEYS.specUrl);
+      const savedSpecUrl = Persistence.get(STORAGE_KEYS.specUrl);
       if (savedSpecUrl) loadSpecFromURL(savedSpecUrl, getSpecAuthHeaders());
     }
     applyAuthToFields();
     const urlInput = document.getElementById('specUrlInput');
-    if (urlInput) urlInput.value = localStorage.getItem(STORAGE_KEYS.specUrl) || '';
+    if (urlInput) urlInput.value = Persistence.get(STORAGE_KEYS.specUrl) || '';
   } catch (e) {}
 }
 
@@ -815,7 +973,7 @@ dropZone.addEventListener('drop', e => {
 function loadSpec(json) {
   spec = json;
   saveSpecToStorage(json);
-  endpoints = [];
+  EndpointStore.clear();
   selectedGroup = null;
   selectedEndpointFilter = null;
   const paths = spec.paths || {};
@@ -823,8 +981,8 @@ function loadSpec(json) {
   Object.entries(paths).forEach(([path, methods]) => {
     Object.entries(methods).forEach(([method, op]) => {
       if (typeof op !== 'object' || ['get','post','put','patch','delete','head','options'].indexOf(method) === -1) return;
-      endpoints.push({
-        key: method + ' ' + path,
+      EndpointStore.add({
+        key: EndpointStore.makeKey(method, path),
         method: method.toUpperCase(),
         path: (base + path).replace(/\/+/g, '/'),
         rawPath: path,
@@ -834,13 +992,13 @@ function loadSpec(json) {
   });
   renderList();
   mainTitle.textContent = spec.info?.title || 'API テスト';
-  mainSub.textContent = `バージョン: ${spec.info?.version || '-'} | エンドポイント: ${endpoints.length} 件`;
+  mainSub.textContent = `バージョン: ${spec.info?.version || '-'} | エンドポイント: ${EndpointStore.length} 件`;
 }
 
 /* Render list */
 function renderList() {
   const q = searchInput.value.trim().toLowerCase();
-  const filtered = endpoints.filter(ep => {
+  const filtered = EndpointStore.all().filter(ep => {
     if (!q) return true;
     return (ep.key + ' ' + (ep.op.summary || '') + ' ' + (ep.op.description || '')).toLowerCase().includes(q);
   });
@@ -911,7 +1069,7 @@ function groupTagOf(ep) {
 }
 function groupOfEntry(entry) {
   if (entry.group) return entry.group;
-  const ep = endpoints.find(e => e.key === (entry.method + ' ' + entry.path)) || endpoints.find(e => e.path === entry.path);
+  const ep = EndpointStore.byKey(entry.method + ' ' + entry.path) || EndpointStore.all().find(e => e.path === entry.path);
   return ep ? groupTagOf(ep) : null;
 }
 
@@ -922,7 +1080,7 @@ function selectEndpoint(key) {
   emptyState.classList.add('hidden');
   testerPanel.classList.remove('hidden');
 
-  const ep = endpoints.find(e => e.key === key);
+  const ep = EndpointStore.byKey(key);
   if (!ep) return;
 
   document.getElementById('detailMethod').textContent = ep.method;
@@ -936,8 +1094,8 @@ function selectEndpoint(key) {
 
   // Server URL
   const servers = spec.servers || (spec.host ? [{url: `https://${spec.host}${spec.basePath || ''}`}] : []);
-  const firstServer = servers[0]?.url || globalServer || '';
-  document.getElementById('serverUrl').value = (localStorage.getItem(STORAGE_KEYS.serverUrl) !== null ? localStorage.getItem(STORAGE_KEYS.serverUrl) : firstServer).replace(/\/$/, '');
+  const firstServer = servers[0]?.url || Persistence.get(STORAGE_KEYS.serverUrl) || '';
+  document.getElementById('serverUrl').value = (Persistence.get(STORAGE_KEYS.serverUrl) || firstServer).replace(/\/$/, '');
 
   // Auth from spec security
   const security = ep.op.security || spec.security || [];
@@ -1090,13 +1248,10 @@ document.getElementById('btnClearAuth').addEventListener('click', () => {
 });
 
 document.getElementById('btnGlobalServer').addEventListener('click', () => {
-  const url = prompt('ベースサーバー URL を入力', globalServer);
+  const url = prompt('ベースサーバー URL を入力', Persistence.get(STORAGE_KEYS.serverUrl) || '');
   if (url === null) return;
-  globalServer = url;
-  if (selectedKey) {
-    const ep = endpoints.find(e => e.key === selectedKey);
-    if (ep) document.getElementById('serverUrl').value = globalServer.replace(/\/$/, '');
-  }
+  const su = document.getElementById('serverUrl');
+  if (su) su.value = url.replace(/\/$/, '');
   saveServerToStorage();
   updateCurlPreview();
 });
@@ -1114,120 +1269,46 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 /* Send request */
 document.getElementById('btnSend').addEventListener('click', async () => {
-  const ep = endpoints.find(e => e.key === selectedKey);
+  const ep = EndpointStore.byKey(selectedKey);
   if (!ep) return;
-
   const serverUrl = document.getElementById('serverUrl').value.trim();
   if (!serverUrl) { alert('サーバー URL を入力してください'); return; }
-
-  let url = serverUrl + ep.path;
-  const method = ep.method;
-  const headers = new Headers();
-  headers.append('Accept', 'application/json');
-
-  // Auth
-  const aType = authType.value;
-  if (aType === 'bearer') {
-    const token = document.getElementById('bearerToken').value.trim();
-    if (token) headers.append('Authorization', 'Bearer ' + token);
-  } else if (aType === 'basic') {
-    const user = document.getElementById('basicUser').value.trim();
-    const pass = document.getElementById('basicPass').value.trim();
-    if (user) headers.append('Authorization', 'Basic ' + btoa(unescape(encodeURIComponent(user + ':' + pass))));
-  } else if (aType === 'apikey') {
-    const key = document.getElementById('apiKeyValue').value.trim();
-    if (key) {
-      // Try to find apiKey location from spec
-      const schemes = spec.components?.securitySchemes || spec.securityDefinitions || {};
-      const scheme = Object.values(schemes).find(s => s.type === 'apiKey');
-      if (scheme && scheme.in === 'header') {
-        headers.append(scheme.name || 'X-API-Key', key);
-      } else if (scheme && scheme.in === 'query') {
-        const u = new URL(url, window.location.href);
-        u.searchParams.append(scheme.name || 'api_key', key);
-        url = u.pathname + u.search;
-        // Re-apply origin if relative
-        if (!url.startsWith('http')) url = serverUrl + url;
-      } else {
-        headers.append('X-API-Key', key);
-      }
-    }
-  }
-
-  // Params
-  const query = new URLSearchParams();
-  const pathValues = {};
-  let bodyParamText = null;
-  document.querySelectorAll('#paramsContainer [data-in]').forEach(el => {
-    const pin = el.dataset.in;
-    const name = el.dataset.name;
-    const val = el.value;
-    if (!val && pin !== 'body') return;
-    if (pin === 'query') query.append(name, val);
-    if (pin === 'path') pathValues[name] = encodeURIComponent(val);
-    if (pin === 'body') bodyParamText = val;
+  // C1: build request via RequestAssembler
+  const req = RequestAssembler.build({
+    endpoint: ep,
+    server: serverUrl,
+    params: collectParams(),
+    bodyText: document.getElementById('requestBody').value,
+    auth: collectAuth(),
   });
-
-  Object.entries(pathValues).forEach(([k, v]) => {
-    url = url.replace('{' + k + '}', v);
-  });
-
-  if (query.toString()) {
-    url += (url.includes('?') ? '&' : '?') + query.toString();
-  }
-
-  // Body
-  let body = undefined;
-  if (['POST','PUT','PATCH'].includes(method)) {
-    // Prefer body parameter from paramsContainer if present
-    if (bodyParamText !== null && bodyParamText.trim()) {
-      headers.append('Content-Type', 'application/json');
-      body = bodyParamText.trim();
-    } else {
-      const bodyText = document.getElementById('requestBody').value.trim();
-      if (bodyText) {
-        headers.append('Content-Type', 'application/json');
-        body = bodyText;
-      }
-    }
-  }
-
   // 実行履歴用スナップショット（認証値は保存しない）
-  const histQuery = {};
-  document.querySelectorAll('#paramsContainer [data-in="query"]').forEach(el => { if (el.value) histQuery[el.dataset.name] = el.value; });
-  const histPath = {};
-  document.querySelectorAll('#paramsContainer [data-in="path"]').forEach(el => { if (el.value) histPath[el.dataset.name] = el.value; });
-  const histBody = (() => {
-    const bp = document.querySelector('#paramsContainer [data-in="body"]');
-    if (bp) return bp.value;
-    return ['POST','PUT','PATCH'].includes(method) ? (document.getElementById('requestBody').value || '') : '';
-  })();
-  const historyParams = { query: histQuery, path: histPath, body: histBody, auth: { type: aType } };
-
+  const p = collectParams();
+  const historyParams = {
+    query: Object.fromEntries(p.query.filter(x => x.value).map(x => [x.name, x.value])),
+    path: Object.fromEntries(p.path.filter(x => x.value).map(x => [x.name, x.value])),
+    body: p.body || (['POST','PUT','PATCH'].includes(req.method) ? (document.getElementById('requestBody').value || '') : ''),
+    auth: { type: authType.value },
+  };
   const start = performance.now();
   try {
-    const resp = await fetch(url, { method, headers, body });
+    const resp = await fetch(req.url, { method: req.method, headers: new Headers(req.headers), body: req.body });
     const elapsed = Math.round(performance.now() - start);
     const text = await resp.text();
     let pretty = text;
     try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch(e){}
-
     document.getElementById('responseEmpty').classList.add('hidden');
     document.getElementById('responseContent').classList.remove('hidden');
-
     const statusEl = document.getElementById('respStatus');
     statusEl.textContent = resp.status + ' ' + resp.statusText;
     statusEl.className = 'status-badge ' + (resp.ok ? 'status-ok' : (resp.status < 500 ? 'status-warn' : 'status-err'));
     document.getElementById('respTime').textContent = `${elapsed} ms`;
     document.getElementById('respBody').textContent = pretty;
-
     const headersObj = {};
     resp.headers.forEach((v, k) => { headersObj[k] = v; });
     document.getElementById('respHeaders').textContent = JSON.stringify(headersObj, null, 2);
-
-    saveHistoryEntry({
+    HistoryStore.add({
       id: uuid(), timestamp: new Date().toISOString(),
-      method, path: ep.path, serverUrl, fullUrl: url,
+      method: req.method, path: ep.path, serverUrl, fullUrl: req.url,
       group: groupTagOf(ep),
       params: historyParams, auth: historyParams.auth,
       response: { status: resp.status, statusText: resp.statusText, time: elapsed, body: text, headers: headersObj, error: '' },
@@ -1242,10 +1323,9 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     document.getElementById('respTime').textContent = '';
     document.getElementById('respBody').textContent = 'Error: ' + err.message + '\n\nヒント: CORS 制限や Mixed Content (HTTPS/HTTP) の可能性があります。';
     document.getElementById('respHeaders').textContent = '';
-
-    saveHistoryEntry({
+    HistoryStore.add({
       id: uuid(), timestamp: new Date().toISOString(),
-      method, path: ep.path, serverUrl, fullUrl: url,
+      method: req.method, path: ep.path, serverUrl, fullUrl: req.url,
       group: groupTagOf(ep),
       params: historyParams, auth: historyParams.auth,
       response: { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message },
@@ -1253,59 +1333,30 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     renderHistory();
   }
 });
-
+  
 /* cURL */
 function buildCurl() {
-  const ep = endpoints.find(e => e.key === selectedKey);
+  const ep = EndpointStore.byKey(selectedKey);
   if (!ep) return '';
   const serverUrl = document.getElementById('serverUrl').value.trim();
   if (!serverUrl) return '';
-
-  let url = serverUrl + ep.path;
-  const method = ep.method;
-  let lines = [`curl -X ${method} "${url}"`];
-
-  const aType = authType.value;
-  if (aType === 'bearer') {
-    const token = document.getElementById('bearerToken').value.trim();
-    if (token) lines.push(`  -H "Authorization: Bearer ${token}"`);
-  } else if (aType === 'basic') {
-    const user = document.getElementById('basicUser').value.trim();
-    const pass = document.getElementById('basicPass').value.trim();
-    if (user) lines.push(`  -u "${user}:${pass}"`);
-  } else if (aType === 'apikey') {
-    const key = document.getElementById('apiKeyValue').value.trim();
-    if (key) lines.push(`  -H "X-API-Key: ${key}"`);
-  }
-
-  lines.push(`  -H "Accept: application/json"`);
-
-  const query = new URLSearchParams();
-  document.querySelectorAll('#paramsContainer [data-in="query"]').forEach(el => {
-    if (el.value) query.append(el.dataset.name, el.value);
+  // C1: build request via RequestAssembler
+  const req = RequestAssembler.build({
+    endpoint: ep,
+    server: serverUrl,
+    params: collectParams(),
+    bodyText: document.getElementById('requestBody').value,
+    auth: collectAuth(),
   });
-  if (query.toString()) {
-    lines[0] = `curl -X ${method} "${url}?${query.toString()}"`;
-  }
-
-  document.querySelectorAll('#paramsContainer [data-in="path"]').forEach(el => {
-    if (el.value) {
-      lines[0] = lines[0].replace('{' + el.dataset.name + '}', el.value);
-    }
+  let lines = [`curl -X ${req.method} "${req.url}"`];
+  if (req.curlAuth) lines.push('  ' + req.curlAuth);
+  req.headers.forEach(([name, value]) => {
+    lines.push(`  -H "${name}: ${value}"`);
   });
-
-  if (['POST','PUT','PATCH'].includes(method)) {
-    // Check for body parameter in paramsContainer first
-    const bodyParam = document.querySelector('#paramsContainer [data-in="body"]');
-    const bodyText = bodyParam ? bodyParam.value.trim() : document.getElementById('requestBody').value.trim();
-    if (bodyText) {
-      lines.push(`  -H "Content-Type: application/json"`);
-      lines.push(`  -d '${bodyText.replace(/'/g, "'\\''")}'`);
-    }
+  if (req.body) {
+    lines.push(`  -d '${req.body.replace(/'/g, "'\\''")}'`);
   }
-
-  return lines.join(' \
-');
+  return lines.join(' \\\n');
 }
 
 function updateCurlPreview() {
@@ -1330,16 +1381,16 @@ document.getElementById('btnReset').addEventListener('click', () => {
 
 /* ===== Feature 1: load spec from URL (T5/T13) ===== */
 function getSpecAuth() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.specAuth) || '{}') || {}; } catch (e) { return {}; }
+  return Persistence.getJSON(STORAGE_KEYS.specAuth) || {};
 }
+// C2: spec-fetch auth uses Auth.materialize for consistent apikey handling
 function getSpecAuthHeaders() {
   const a = getSpecAuth();
+  const mat = Auth.materialize(a, spec);
+  if (!mat.header && !mat.query) return null;
   const headers = new Headers();
-  let has = false;
-  if (a.type === 'bearer' && a.bearer) { headers.append('Authorization', 'Bearer ' + a.bearer); has = true; }
-  else if (a.type === 'apikey' && a.apiKey) { headers.append('X-API-Key', a.apiKey); has = true; }
-  else if (a.type === 'basic' && a.basicUser) { headers.append('Authorization', 'Basic ' + btoa(unescape(encodeURIComponent(a.basicUser + ':' + (a.basicPass || ''))))); has = true; }
-  return has ? headers : null;
+  if (mat.header) headers.append(mat.header.name, mat.header.value);
+  return headers;
 }
 async function loadSpecFromURL(url, headers) {
   const input = document.getElementById('specUrlInput');
@@ -1355,7 +1406,7 @@ async function loadSpecFromURL(url, headers) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (resp.statusText || ''));
     const json = await resp.json();
     loadSpec(json);
-    try { localStorage.setItem(STORAGE_KEYS.specUrl, url); } catch (e) {}
+    Persistence.set(STORAGE_KEYS.specUrl, url);
     if (input) input.value = url;
   } catch (err) {
     alert('URL から取得に失敗: ' + err.message);
@@ -1370,42 +1421,22 @@ function uuid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return Date.now() + '-' + Math.random().toString(36).slice(2);
 }
-function getHistoryMax() {
-  const n = parseInt(localStorage.getItem(STORAGE_KEYS.historyMax) || '', 10);
-  return (n && n >= 1 && n <= 100) ? n : 20;
-}
-function getHistory() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.history);
-    const arr = raw ? JSON.parse(raw) : [];
-    return arr.slice().reverse();
-  } catch (e) { return []; }
-}
-function saveHistoryEntry(entry) {
-  let list = [];
-  try { const raw = localStorage.getItem(STORAGE_KEYS.history); if (raw) list = JSON.parse(raw); } catch (e) {}
-  list.push(entry);
-  const max = getHistoryMax();
-  while (list.length > max) list.shift();
-  try { localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(list)); } catch (e) {}
-}
+// C3: old getHistoryMax/getHistory/saveHistoryEntry/clearHistory replaced by HistoryStore
 function clearHistory() {
-  try { localStorage.removeItem(STORAGE_KEYS.history); } catch (e) {}
+  HistoryStore.clear();
   renderHistory();
 }
 function statusClassFor(s) {
   if (!s) return 'hist-err';
   return s < 300 ? 'hist-ok' : (s < 500 ? 'hist-warn' : 'hist-err');
 }
+// C3: renderHistory uses HistoryStore for storage + filter (pure), only this function touches DOM
 function renderHistory() {
   const list = document.getElementById('historyList');
   if (!list) return;
-  let items = getHistory();
-  if (selectedEndpointFilter) {
-    items = items.filter(e => (e.method + ' ' + e.path) === selectedEndpointFilter);
-  } else if (selectedGroup) {
-    items = items.filter(e => groupOfEntry(e) === selectedGroup);
-  }
+  const all = HistoryStore.get();
+  // C3: filter is a pure predicate via HistoryStore.filter
+  let items = HistoryStore.filter(all, { endpoint: selectedEndpointFilter, group: selectedGroup });
   if (!items.length) {
     let msg = '履歴なし';
     if (selectedEndpointFilter) msg = 'このエンドポイントの実行履歴はありません';
@@ -1431,14 +1462,14 @@ function renderHistory() {
   }).join('');
   list.querySelectorAll('.history-item').forEach(el => {
     el.addEventListener('click', () => {
-      const entry = getHistory().find(x => x.id === el.dataset.id);
+      const entry = all.find(x => x.id === el.dataset.id);
       if (entry) applyHistoryEntry(entry);
     });
   });
 }
+// C3: applyHistoryEntry — only function that touches DOM for history replay
 function applyHistoryEntry(entry) {
-  const key = entry.method + ' ' + entry.path;
-  const ep = endpoints.find(e => e.key === key);
+  const ep = EndpointStore.byKey(entry.method + ' ' + entry.path);
   if (!ep) { alert('この履歴のエンドポイントが現在の spec に存在しません'); return; }
   selectEndpoint(ep.key);
   const p = entry.params || {};
@@ -1476,28 +1507,27 @@ function toggleSpecAuth() {
   document.getElementById('setSpecAuthApiKey').classList.toggle('hidden', v !== 'apikey');
   document.getElementById('setSpecAuthBasic').classList.toggle('hidden', v !== 'basic');
 }
+// C5: settings use Persistence adapter
 function saveSpecAuth() {
-  try {
-    localStorage.setItem(STORAGE_KEYS.specAuth, JSON.stringify({
-      type: document.getElementById('setSpecAuthType').value,
-      bearer: document.getElementById('setSpecBearer').value,
-      apiKey: document.getElementById('setSpecApiKey').value,
-      basicUser: document.getElementById('setSpecBasicUser').value,
-      basicPass: document.getElementById('setSpecBasicPass').value,
-    }));
-  } catch (e) {}
+  Persistence.setJSON(STORAGE_KEYS.specAuth, {
+    type: document.getElementById('setSpecAuthType').value,
+    bearer: document.getElementById('setSpecBearer').value,
+    apiKey: document.getElementById('setSpecApiKey').value,
+    basicUser: document.getElementById('setSpecBasicUser').value,
+    basicPass: document.getElementById('setSpecBasicPass').value,
+  });
 }
 function fillSettingsFromStorage() {
-  document.getElementById('setDefaultSpecUrl').value = localStorage.getItem(STORAGE_KEYS.defaultSpecUrl) || '';
-  document.getElementById('setDefaultServer').value = localStorage.getItem(STORAGE_KEYS.defaultServer) || '';
-  document.getElementById('setHistoryMax').value = String(getHistoryMax());
+  document.getElementById('setDefaultSpecUrl').value = Persistence.get(STORAGE_KEYS.defaultSpecUrl) || '';
+  document.getElementById('setDefaultServer').value = Persistence.get(STORAGE_KEYS.defaultServer) || '';
+  document.getElementById('setHistoryMax').value = String(HistoryStore.max());
   const specAuth = getSpecAuth();
   document.getElementById('setSpecAuthType').value = specAuth.type || 'none';
   document.getElementById('setSpecBearer').value = specAuth.bearer || '';
   document.getElementById('setSpecApiKey').value = specAuth.apiKey || '';
   document.getElementById('setSpecBasicUser').value = specAuth.basicUser || '';
   document.getElementById('setSpecBasicPass').value = specAuth.basicPass || '';
-  const defAuth = JSON.parse(localStorage.getItem(STORAGE_KEYS.defaultAuth) || 'null');
+  const defAuth = Persistence.getJSON(STORAGE_KEYS.defaultAuth);
   document.getElementById('setDefaultAuthType').value = (defAuth && defAuth.type) || 'none';
   toggleSpecAuth();
 }
@@ -1505,21 +1535,21 @@ function openSettings() { fillSettingsFromStorage(); settingsModal.classList.add
 function closeSettings() { settingsModal.classList.remove('open'); }
 function applyDefaults() {
   let applied = false;
-  const specUrl = localStorage.getItem(STORAGE_KEYS.defaultSpecUrl);
+  const specUrl = Persistence.get(STORAGE_KEYS.defaultSpecUrl);
   if (specUrl) {
-    try { localStorage.setItem(STORAGE_KEYS.specUrl, specUrl); } catch (e) {}
+    Persistence.set(STORAGE_KEYS.specUrl, specUrl);
     const i = document.getElementById('specUrlInput'); if (i) i.value = specUrl;
     applied = true;
   }
-  const defServer = localStorage.getItem(STORAGE_KEYS.defaultServer);
+  const defServer = Persistence.get(STORAGE_KEYS.defaultServer);
   if (defServer !== null) {
-    globalServer = defServer;
-    saveServerToStorage();
+    // C5: set serverUrl directly (no globalServer) and persist
     const su = document.getElementById('serverUrl');
     if (su && (selectedKey || spec)) su.value = defServer.replace(/\/$/, '');
+    Persistence.set(STORAGE_KEYS.serverUrl, defServer);
     applied = true;
   }
-  const defAuth = JSON.parse(localStorage.getItem(STORAGE_KEYS.defaultAuth) || 'null');
+  const defAuth = Persistence.getJSON(STORAGE_KEYS.defaultAuth);
   if (defAuth && defAuth.type) {
     globalAuth.type = defAuth.type;
     saveAuthToStorage();
@@ -1531,9 +1561,9 @@ function applyDefaults() {
 }
 function clearDefaults() {
   if (!confirm('デフォルト設定をすべて削除しますか？')) return;
-  localStorage.removeItem(STORAGE_KEYS.defaultSpecUrl);
-  localStorage.removeItem(STORAGE_KEYS.defaultServer);
-  localStorage.removeItem(STORAGE_KEYS.defaultAuth);
+  Persistence.remove(STORAGE_KEYS.defaultSpecUrl);
+  Persistence.remove(STORAGE_KEYS.defaultServer);
+  Persistence.remove(STORAGE_KEYS.defaultAuth);
   fillSettingsFromStorage();
 }
 
@@ -1553,10 +1583,11 @@ settingsModal.addEventListener('click', e => { if (e.target === settingsModal) c
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings(); });
 document.getElementById('btnApplyDefaults').addEventListener('click', applyDefaults);
 document.getElementById('btnClearDefaults').addEventListener('click', clearDefaults);
-document.getElementById('setDefaultSpecUrl').addEventListener('input', e => { try { localStorage.setItem(STORAGE_KEYS.defaultSpecUrl, e.target.value.trim()); } catch (x) {} });
-document.getElementById('setDefaultServer').addEventListener('input', e => { try { localStorage.setItem(STORAGE_KEYS.defaultServer, e.target.value.trim()); } catch (x) {} });
-document.getElementById('setHistoryMax').addEventListener('input', e => { let n = parseInt(e.target.value, 10); if (isNaN(n)) n = 20; n = Math.max(1, Math.min(100, n)); try { localStorage.setItem(STORAGE_KEYS.historyMax, String(n)); } catch (x) {} });
-document.getElementById('setDefaultAuthType').addEventListener('change', e => { try { localStorage.setItem(STORAGE_KEYS.defaultAuth, JSON.stringify({ type: e.target.value })); } catch (x) {} });
+// C5: event handlers use Persistence adapter
+document.getElementById('setDefaultSpecUrl').addEventListener('input', e => Persistence.set(STORAGE_KEYS.defaultSpecUrl, e.target.value.trim()));
+document.getElementById('setDefaultServer').addEventListener('input', e => Persistence.set(STORAGE_KEYS.defaultServer, e.target.value.trim()));
+document.getElementById('setHistoryMax').addEventListener('input', e => { let n = parseInt(e.target.value, 10); if (isNaN(n)) n = 20; n = Math.max(1, Math.min(100, n)); Persistence.set(STORAGE_KEYS.historyMax, String(n)); });
+document.getElementById('setDefaultAuthType').addEventListener('change', e => Persistence.setJSON(STORAGE_KEYS.defaultAuth, { type: e.target.value }));
 document.getElementById('setSpecAuthType').addEventListener('change', e => { toggleSpecAuth(); saveSpecAuth(); });
 document.getElementById('setSpecBearer').addEventListener('input', saveSpecAuth);
 document.getElementById('setSpecApiKey').addEventListener('input', saveSpecAuth);
