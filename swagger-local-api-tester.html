@@ -442,7 +442,7 @@ pre.codeblock {
       </div>
       <div style="display:flex; gap:.5rem;">
         <button class="btn btn-sm" id="btnGlobalAuth" title="認証設定">🔑 認証</button>
-        <button class="btn btn-sm" id="btnGlobalServer" title="サーバー設定">🌐 ーバー</button>
+        <button class="btn btn-sm" id="btnGlobalServer" title="サーバー設定">🌐 サーバー</button>
       </div>
     </div>
 
@@ -564,6 +564,27 @@ let selectedKey = null;
 let globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
 let globalServer = '';
 
+/* Persistence (survive reload via LocalStorage) */
+const STORAGE_KEYS = { spec: 'swlt.spec', server: 'swlt.server', serverUrl: 'swlt.serverUrl' };
+function saveSpecToStorage(json) {
+  try { localStorage.setItem(STORAGE_KEYS.spec, JSON.stringify(json)); } catch (e) {}
+}
+function saveServerToStorage() {
+  try {
+    localStorage.setItem(STORAGE_KEYS.server, globalServer || '');
+    const su = document.getElementById('serverUrl');
+    if (su && su.value) localStorage.setItem(STORAGE_KEYS.serverUrl, su.value);
+  } catch (e) {}
+}
+function restoreState() {
+  try {
+    const savedServer = localStorage.getItem(STORAGE_KEYS.server);
+    if (savedServer !== null) globalServer = savedServer;
+    const savedSpec = localStorage.getItem(STORAGE_KEYS.spec);
+    if (savedSpec) loadSpec(JSON.parse(savedSpec));
+  } catch (e) {}
+}
+
 /* DOM */
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
@@ -603,6 +624,7 @@ dropZone.addEventListener('drop', e => {
 /* Parse spec */
 function loadSpec(json) {
   spec = json;
+  saveSpecToStorage(json);
   endpoints = [];
   const paths = spec.paths || {};
   const base = spec.basePath || '';
@@ -701,7 +723,7 @@ function selectEndpoint(key) {
   // Server URL
   const servers = spec.servers || (spec.host ? [{url: `https://${spec.host}${spec.basePath || ''}`}] : []);
   const firstServer = servers[0]?.url || globalServer || '';
-  document.getElementById('serverUrl').value = firstServer.replace(/\/$/, '');
+  document.getElementById('serverUrl').value = (localStorage.getItem(STORAGE_KEYS.serverUrl) !== null ? localStorage.getItem(STORAGE_KEYS.serverUrl) : firstServer).replace(/\/$/, '');
 
   // Auth from spec security
   const security = ep.op.security || spec.security || [];
@@ -843,6 +865,7 @@ document.getElementById('btnGlobalServer').addEventListener('click', () => {
     const ep = endpoints.find(e => e.key === selectedKey);
     if (ep) document.getElementById('serverUrl').value = globalServer.replace(/\/$/, '');
   }
+  saveServerToStorage();
   updateCurlPreview();
 });
 
@@ -1030,6 +1053,7 @@ function updateCurlPreview() {
 // Update curl when inputs change
 document.addEventListener('input', e => {
   if (e.target.closest('#testerPanel')) updateCurlPreview();
+  if (e.target.id === 'serverUrl') saveServerToStorage();
 });
 
 document.getElementById('btnCopyCurl').addEventListener('click', () => {
@@ -1048,6 +1072,8 @@ document.addEventListener('keydown', e => {
     document.getElementById('btnSend').click();
   }
 });
+/* Restore persisted state on load */
+restoreState();
 </script>
 </body>
 </html>
