@@ -831,7 +831,7 @@ const HistoryStore = {
   },
   /** filter(entries, { group, endpoint }) — pure predicate, no DOM */
   filter(entries, opts) {
-    if (opts.endpoint) return entries.filter(e => (e.method + ' ' + e.path) === opts.endpoint);
+    if (opts.endpoint) return entries.filter(e => e.key === opts.endpoint);
     if (opts.group) return entries.filter(e => groupOfEntry(e) === opts.group);
     return entries;
   }
@@ -1308,6 +1308,7 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     document.getElementById('respHeaders').textContent = JSON.stringify(headersObj, null, 2);
     HistoryStore.add({
       id: uuid(), timestamp: new Date().toISOString(),
+      key: ep.key,
       method: req.method, path: ep.path, serverUrl, fullUrl: req.url,
       group: groupTagOf(ep),
       params: historyParams, auth: historyParams.auth,
@@ -1325,6 +1326,7 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     document.getElementById('respHeaders').textContent = '';
     HistoryStore.add({
       id: uuid(), timestamp: new Date().toISOString(),
+      key: ep.key,
       method: req.method, path: ep.path, serverUrl, fullUrl: req.url,
       group: groupTagOf(ep),
       params: historyParams, auth: historyParams.auth,
