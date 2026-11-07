@@ -1069,7 +1069,9 @@ function groupTagOf(ep) {
 }
 function groupOfEntry(entry) {
   if (entry.group) return entry.group;
-  const ep = EndpointStore.byKey(entry.method + ' ' + entry.path) || EndpointStore.all().find(e => e.path === entry.path);
+  const ep =
+    (entry.key ? EndpointStore.byKey(entry.key) : undefined) ||
+    EndpointStore.all().find(e => e.path === entry.path);
   return ep ? groupTagOf(ep) : null;
 }
 
@@ -1471,7 +1473,15 @@ function renderHistory() {
 }
 // C3: applyHistoryEntry — only function that touches DOM for history replay
 function applyHistoryEntry(entry) {
-  const ep = EndpointStore.byKey(entry.method + ' ' + entry.path);
+  // entry.key is authoritative (stored as ep.key at save time). The old lookup
+  // rebuilt 'method + " " + path' from the *uppercase* req.method, which never
+  // matched the *lowercase*-based endpoint key, so the alert always fired.
+  // Fall back to a path(+method) match for legacy entries that predate the key field.
+  const ep =
+    (entry.key ? EndpointStore.byKey(entry.key) : undefined) ||
+    EndpointStore.all().find(e =>
+      e.method.toLowerCase() === String(entry.method || '').toLowerCase() && e.path === entry.path) ||
+    EndpointStore.all().find(e => e.path === entry.path);
   if (!ep) { alert('この履歴のエンドポイントが現在の spec に存在しません'); return; }
   selectEndpoint(ep.key);
   const p = entry.params || {};
