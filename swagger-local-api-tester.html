@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swagger Local API Tester</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-hover: #1f242c;
+  --border: #30363d;
+  --ink: #c9d1d9;
+  --ink-strong: #f0f6fc;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --accent-weak: rgba(88,166,255,0.15);
+  --success: #3fb950;
+  --success-weak: rgba(63,185,80,0.15);
+  --warning: #d29922;
+  --warning-weak: rgba(210,153,34,0.15);
+  --danger: #f85149;
+  --danger-weak: rgba(248,81,73,0.15);
+  --radius: 10px;
+  --space: 1rem;
+  --shadow: 0 8px 24px rgba(0,0,0,0.35);
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  line-height: 1.6;
+  overflow: hidden;
+}
+
+/* Layout */
+.app { display: flex; height: 100vh; }
+.sidebar {
+  width: 340px;
+  min-width: 260px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.brand {
+  padding: 1.1rem var(--space);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.brand-icon {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), #a371f7);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+}
+.brand-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink-strong);
+  letter-spacing: 0.02em;
+}
+.brand-sub {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: -2px;
+}
+
+/* Upload */
+.upload-area {
+  margin: var(--space);
+  padding: 1.2rem;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  position: relative;
+}
+.upload-area:hover, .upload-area.dragover {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+.upload-area input[type=file] {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer;
+}
+.upload-icon {
+  font-size: 1.6rem; margin-bottom: .4rem;
+}
+.upload-text {
+  font-size: 0.9rem; color: var(--ink-strong); font-weight: 600;
+}
+.upload-hint {
+  font-size: 0.78rem; color: var(--muted); margin-top: .2rem;
+}
+
+/* Search */
+.search-box {
+  padding: 0 var(--space) var(--space);
+}
+.search-box input {
+  width: 100%;
+  padding: .55rem .7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  outline: none;
+}
+.search-box input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+
+/* Endpoint list */
+.endpoint-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--space) var(--space);
+}
+.endpoint-group {
+  margin-bottom: .6rem;
+}
+.endpoint-group-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: .4rem .5rem;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.endpoint-item {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .55rem .6rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s;
+  border: 1px solid transparent;
+}
+.endpoint-item:hover {
+  background: var(--surface-hover);
+}
+.endpoint-item.active {
+  background: var(--accent-weak);
+  border-color: rgba(88,166,255,0.35);
+}
+.method {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: .18rem .38rem;
+  border-radius: 5px;
+  text-transform: uppercase;
+  min-width: 52px;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+.m-get { background: var(--accent-weak); color: var(--accent); }
+.m-post { background: var(--success-weak); color: var(--success); }
+.m-put { background: var(--warning-weak); color: var(--warning); }
+.m-patch { background: var(--warning-weak); color: var(--warning); }
+.m-delete { background: var(--danger-weak); color: var(--danger); }
+.m-head, .m-options { background: rgba(139,148,158,0.15); color: var(--muted); }
+.endpoint-path {
+  font-size: 0.85rem;
+  color: var(--ink-strong);
+  word-break: break-all;
+  line-height: 1.35;
+}
+.endpoint-summary {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: .1rem;
+}
+
+/* Main header */
+.main-header {
+  padding: 1rem var(--space);
+  border-bottom: 1px solid var(--border);
+  background: rgba(13,17,23,0.7);
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+}
+.main-title {
+  font-size: 1.15rem; font-weight: 700; color: var(--ink-strong);
+}
+.main-sub {
+  font-size: 0.8rem; color: var(--muted);
+}
+
+/* Panels */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space);
+  margin-bottom: var(--space);
+}
+.panel-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ink-strong);
+  margin-bottom: .7rem;
+  display: flex; align-items: center; gap: .5rem;
+}
+
+/* Form */
+.form-row {
+  display: flex; flex-direction: column; gap: .35rem;
+  margin-bottom: .8rem;
+}
+.form-row label {
+  font-size: 0.82rem; font-weight: 600; color: var(--ink-strong);
+  display: flex; align-items: center; gap: .4rem;
+}
+.form-row small {
+  font-size: 0.75rem; color: var(--muted);
+}
+input[type=text], input[type=url], input[type=password], select, textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .55rem .7rem;
+  color: var(--ink);
+  font-size: 0.9rem;
+  outline: none;
+  font-family: var(--font-body);
+}
+textarea {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  min-height: 120px;
+  resize: vertical;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+::placeholder { color: #484f58; }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+  padding: .6rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .05s, background .15s, border-color .15s;
+}
+.btn:hover { background: #252b36; border-color: #3d444d; }
+.btn:active { transform: translateY(1px); }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: #79b8ff; border-color: #79b8ff; }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-sm { padding: .4rem .7rem; font-size: 0.82rem; }
+
+/* Method badge big */
+.method-big {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: .35rem .7rem;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+/* Response */
+.response-meta {
+  display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+  margin-bottom: .6rem;
+}
+.status-badge {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: .35rem .7rem;
+  border-radius: 6px;
+}
+.status-ok { background: var(--success-weak); color: var(--success); }
+.status-err { background: var(--danger-weak); color: var(--danger); }
+.status-warn { background: var(--warning-weak); color: var(--warning); }
+
+pre.codeblock {
+  background: #090c10;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .8rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: #e6edf3;
+  max-height: 420px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Two columns in main */
+.main-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space);
+}
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space);
+}
+@media (max-width: 980px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  .sidebar { width: 260px; }
+}
+@media (max-width: 640px) {
+  .app { flex-direction: column; }
+  .sidebar { width: 100%; height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
+}
+
+/* Empty state */
+.empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+  text-align: center;
+  padding: 2rem;
+}
+.empty h2 { color: var(--ink-strong); margin-bottom: .4rem; }
+
+/* Tag */
+.tag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: .15rem .4rem;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Tabs */
+.tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--border); margin-bottom: .8rem; }
+.tab {
+  padding: .5rem .9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover { color: var(--ink); }
+
+/* Section hidden */
+.hidden { display: none !important; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #3d444d; }
+
+/* Required asterisk */
+.req { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">S</div>
+      <div>
+        <div class="brand-title">Swagger Local Tester</div>
+        <div class="brand-sub">OpenAPI / Swagger テストツール</div>
+      </div>
+    </div>
+
+    <div class="upload-area" id="dropZone">
+      <input type="file" id="fileInput" accept=".json,application/json">
+      <div class="upload-icon">📂</div>
+      <div class="upload-text">swagger.json / openapi.json を選択</div>
+      <div class="upload-hint">またはここにドラッグ＆ドロップ</div>
+    </div>
+
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="API を検索..." autocomplete="off">
+    </div>
+
+    <div class="endpoint-list" id="endpointList">
+      <div class="empty" style="height:auto; padding:2rem 1rem;">
+        <div>
+          <div style="font-size:2rem; margin-bottom:.4rem;">📋</div>
+          <div style="color:var(--ink-strong); font-weight:700;">ファイルを読み込んでください</div>
+          <div style="font-size:0.85rem; margin-top:.3rem;">JSON ファイルを選択すると API 一覧が表示されます</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="main-header">
+      <div>
+        <div class="main-title" id="mainTitle">API テスト</div>
+        <div class="main-sub" id="mainSub">swagger.json を読み込むと、ここでリクエストのテストができます</div>
+      </div>
+      <div style="display:flex; gap:.5rem;">
+        <button class="btn btn-sm" id="btnGlobalAuth" title="認証設定">🔑 認証</button>
+        <button class="btn btn-sm" id="btnGlobalServer" title="サーバー設定">🌐 ーバー</button>
+      </div>
+    </div>
+
+    <div class="main-scroll" id="mainScroll">
+      <div class="empty" id="emptyState">
+        <div>
+          <div style="font-size:3rem; margin-bottom:.6rem;">🧪</div>
+          <h2>Swagger Local API Tester</h2>
+          <p>左側から OpenAPI / Swagger JSON を読み込んでください。<br>外部サーバー不要・インストール不要で動作します。</p>
+          <div style="margin-top:1.2rem; display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap;">
+            <span class="tag">ローカル完結</span>
+            <span class="tag">CORS 注意</span>
+            <span class="tag">OpenAPI 3.0 / Swagger 2.0</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="testerPanel" class="hidden">
+        <div class="grid-2">
+          <div>
+            <div class="panel">
+              <div class="panel-title">📋 エンドポイント情報</div>
+              <div style="display:flex; align-items:center; gap:.7rem; margin-bottom:.6rem; flex-wrap:wrap;">
+                <span id="detailMethod" class="method-big m-get">GET</span>
+                <code id="detailPath" style="font-size:1rem; color:var(--ink-strong);">/users</code>
+              </div>
+              <div id="detailSummary" style="font-weight:700; color:var(--ink-strong); margin-bottom:.3rem;"></div>
+              <div id="detailDesc" style="font-size:0.88rem; color:var(--muted); line-height:1.6;"></div>
+              <div id="detailTags" style="margin-top:.7rem; display:flex; gap:.4rem; flex-wrap:wrap;"></div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-title">🔧 リクエスト設定</div>
+              <div class="form-row">
+                <label>サーバー URL</label>
+                <input type="text" id="serverUrl" placeholder="https://api.example.com/v1">
+              </div>
+
+              <div id="authPanel">
+                <div class="form-row">
+                  <label>認証タイプ</label>
+                  <select id="authType">
+                    <option value="none">なし</option>
+                    <option value="bearer">Bearer Token</option>
+                    <option value="apikey">API Key</option>
+                    <option value="basic">Basic Auth</option>
+                  </select>
+                </div>
+                <div class="form-row hidden" id="authBearer">
+                  <label>Token</label>
+                  <input type="password" id="bearerToken" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+                </div>
+                <div class="form-row hidden" id="authApiKey">
+                  <label>API Key</label>
+                  <input type="password" id="apiKeyValue" placeholder="your-api-key">
+                  <small>ヘッダー名またはクエリ名は仕様から自動設定されます</small>
+                </div>
+                <div class="form-row hidden" id="authBasic">
+                  <label>Username</label>
+                  <input type="text" id="basicUser" placeholder="username">
+                  <label style="margin-top:.4rem;">Password</label>
+                  <input type="password" id="basicPass" placeholder="password">
+                </div>
+              </div>
+
+              <div id="paramsContainer"></div>
+
+              <div class="form-row" id="bodyContainer" style="display:none;">
+                <label>Request Body (JSON)</label>
+                <textarea id="requestBody" placeholder='{ "key": "value" }'></textarea>
+              </div>
+
+              <div style="display:flex; gap:.5rem; margin-top:.4rem;">
+                <button class="btn btn-primary" id="btnSend">▶ 送信</button>
+                <button class="btn" id="btnCopyCurl">📋 cURL をコピー</button>
+                <button class="btn" id="btnReset">↺ リセット</button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="panel">
+              <div class="panel-title">📡 レスポンス</div>
+              <div id="responseEmpty" style="color:var(--muted); font-size:0.9rem;">リクエストを送信すると結果が表示されます</div>
+              <div id="responseContent" class="hidden">
+                <div class="response-meta">
+                  <span id="respStatus" class="status-badge status-ok">200 OK</span>
+                  <span id="respTime" style="font-size:0.85rem; color:var(--muted);"></span>
+                </div>
+                <div class="tabs">
+                  <div class="tab active" data-tab="body">Body</div>
+                  <div class="tab" data-tab="headers">Headers</div>
+                </div>
+                <div id="tabBody">
+                  <pre class="codeblock" id="respBody"></pre>
+                </div>
+                <div id="tabHeaders" class="hidden">
+                  <pre class="codeblock" id="respHeaders"></pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-title">📖 cURL プレビュー</div>
+              <pre class="codeblock" id="curlPreview" style="max-height:220px;">curl -X GET "https://example.com/api"</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+/* State */
+let spec = null;
+let endpoints = [];
+let selectedKey = null;
+let globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
+let globalServer = '';
+
+/* DOM */
+const fileInput = document.getElementById('fileInput');
+const dropZone = document.getElementById('dropZone');
+const endpointList = document.getElementById('endpointList');
+const searchInput = document.getElementById('searchInput');
+const emptyState = document.getElementById('emptyState');
+const testerPanel = document.getElementById('testerPanel');
+const mainTitle = document.getElementById('mainTitle');
+const mainSub = document.getElementById('mainSub');
+
+/* Upload */
+function handleFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const json = JSON.parse(e.target.result);
+      loadSpec(json);
+    } catch (err) {
+      alert('JSON の解析に失敗しました: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+
+/* Parse spec */
+function loadSpec(json) {
+  spec = json;
+  endpoints = [];
+  const paths = spec.paths || {};
+  const base = spec.basePath || '';
+  Object.entries(paths).forEach(([path, methods]) => {
+    Object.entries(methods).forEach(([method, op]) => {
+      if (typeof op !== 'object' || ['get','post','put','patch','delete','head','options'].indexOf(method) === -1) return;
+      endpoints.push({
+        key: method + ' ' + path,
+        method: method.toUpperCase(),
+        path: (base + path).replace(/\/+/g, '/'),
+        rawPath: path,
+        op,
+      });
+    });
+  });
+  renderList();
+  mainTitle.textContent = spec.info?.title || 'API テスト';
+  mainSub.textContent = `バージョン: ${spec.info?.version || '-'} | エンドポイント: ${endpoints.length} 件`;
+}
+
+/* Render list */
+function renderList() {
+  const q = searchInput.value.trim().toLowerCase();
+  const filtered = endpoints.filter(ep => {
+    if (!q) return true;
+    return (ep.key + ' ' + (ep.op.summary || '') + ' ' + (ep.op.description || '')).toLowerCase().includes(q);
+  });
+
+  if (!spec) {
+    endpointList.innerHTML = `<div class="empty" style="height:auto; padding:2rem 1rem;"><div><div style="font-size:2rem; margin-bottom:.4rem;">📋</div><div style="color:var(--ink-strong); font-weight:700;">ファイルを読み込んでください</div></div></div>`;
+    return;
+  }
+
+  if (filtered.length === 0) {
+    endpointList.innerHTML = `<div class="empty" style="height:auto; padding:2rem 1rem;"><div style="color:var(--muted);">該当する API がありません</div></div>`;
+    return;
+  }
+
+  // Group by first tag or path prefix
+  const groups = {};
+  filtered.forEach(ep => {
+    const tag = (ep.op.tags && ep.op.tags[0]) || ep.path.split('/')[1] || 'default';
+    if (!groups[tag]) groups[tag] = [];
+    groups[tag].push(ep);
+  });
+
+  let html = '';
+  Object.entries(groups).forEach(([tag, eps]) => {
+    html += `<div class="endpoint-group">
+      <div class="endpoint-group-title">${escapeHtml(tag)}</div>`;
+    eps.forEach(ep => {
+      const active = ep.key === selectedKey ? 'active' : '';
+      html += `
+        <div class="endpoint-item ${active}" data-key="${escapeHtml(ep.key)}">
+          <span class="method m-${ep.method.toLowerCase()}">${ep.method}</span>
+          <div>
+            <div class="endpoint-path">${escapeHtml(ep.path)}</div>
+            ${ep.op.summary ? `<div class="endpoint-summary">${escapeHtml(ep.op.summary)}</div>` : ''}
+          </div>
+        </div>`;
+    });
+    html += `</div>`;
+  });
+  endpointList.innerHTML = html;
+
+  endpointList.querySelectorAll('.endpoint-item').forEach(el => {
+    el.addEventListener('click', () => selectEndpoint(el.dataset.key));
+  });
+}
+
+searchInput.addEventListener('input', renderList);
+
+function escapeHtml(t) {
+  return String(t).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+/* Select endpoint */
+function selectEndpoint(key) {
+  selectedKey = key;
+  renderList();
+  emptyState.classList.add('hidden');
+  testerPanel.classList.remove('hidden');
+
+  const ep = endpoints.find(e => e.key === key);
+  if (!ep) return;
+
+  document.getElementById('detailMethod').textContent = ep.method;
+  document.getElementById('detailMethod').className = 'method-big m-' + ep.method.toLowerCase();
+  document.getElementById('detailPath').textContent = ep.path;
+  document.getElementById('detailSummary').textContent = ep.op.summary || '';
+  document.getElementById('detailDesc').textContent = ep.op.description || '';
+
+  const tagContainer = document.getElementById('detailTags');
+  tagContainer.innerHTML = (ep.op.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+
+  // Server URL
+  const servers = spec.servers || (spec.host ? [{url: `https://${spec.host}${spec.basePath || ''}`}] : []);
+  const firstServer = servers[0]?.url || globalServer || '';
+  document.getElementById('serverUrl').value = firstServer.replace(/\/$/, '');
+
+  // Auth from spec security
+  const security = ep.op.security || spec.security || [];
+  updateAuthFromSpec(security);
+
+  // Params
+  renderParams(ep);
+
+  // Body
+  const hasBody = ['POST','PUT','PATCH'].includes(ep.method);
+  const hasBodyParam = (ep.op.parameters || []).some(p => p.in === 'body');
+  const bodyContainer = document.getElementById('bodyContainer');
+  if (hasBody && !hasBodyParam) {
+    bodyContainer.style.display = 'flex';
+    const example = generateExample(ep.op.requestBody);
+    document.getElementById('requestBody').value = example;
+  } else {
+    bodyContainer.style.display = 'none';
+    document.getElementById('requestBody').value = '';
+  }
+
+  updateCurlPreview();
+}
+
+function generateExample(requestBody) {
+  if (!requestBody) return '';
+  const content = requestBody.content || { 'application/json': { schema: requestBody.schema } };
+  const schema = content['application/json']?.schema || content['application/json; charset=utf-8']?.schema;
+  if (!schema) return '';
+  return JSON.stringify(schemaToExample(schema), null, 2);
+}
+
+function schemaToExample(schema) {
+  if (!schema) return null;
+  if (schema.example !== undefined) return schema.example;
+  if (schema.default !== undefined) return schema.default;
+  if (schema.$ref) {
+    const name = schema.$ref.split('/').pop();
+    const def = (spec.components?.schemas || spec.definitions || {})[name];
+    return schemaToExample(def);
+  }
+  if (schema.type === 'object' || schema.properties) {
+    const obj = {};
+    Object.entries(schema.properties || {}).forEach(([k, v]) => { obj[k] = schemaToExample(v); });
+    return obj;
+  }
+  if (schema.type === 'array') {
+    return [schemaToExample(schema.items)];
+  }
+  if (schema.type === 'string') return schema.enum ? schema.enum[0] : 'string';
+  if (schema.type === 'integer' || schema.type === 'number') return 0;
+  if (schema.type === 'boolean') return false;
+  return null;
+}
+
+function renderParams(ep) {
+  const container = document.getElementById('paramsContainer');
+  const params = ep.op.parameters || [];
+  if (!params.length) { container.innerHTML = ''; return; }
+
+  let html = '<div style="margin-bottom:.4rem; font-weight:700; color:var(--ink-strong); font-size:.9rem;">パラメータ</div>';
+  params.forEach((p, idx) => {
+    const name = p.name || p.$ref;
+    const required = p.required ? ' <span class="req">*</span>' : '';
+    const type = p.schema?.type || p.type || 'string';
+    const desc = p.description || '';
+    const inputId = 'param_' + (p.in || 'query') + '_' + name + '_' + idx;
+    html += `<div class="form-row">
+      <label for="${inputId}">${escapeHtml(name)}${required} <span class="tag">${escapeHtml(p.in || 'query')}</span> <span class="tag">${escapeHtml(type)}</span></label>
+      ${desc ? `<small>${escapeHtml(desc)}</small>` : ''}`;
+    if (p.in === 'body') {
+      html += `<textarea id="${inputId}" data-in="body" data-name="${escapeHtml(name)}">${escapeHtml(JSON.stringify(schemaToExample(p.schema), null, 2) || '')}</textarea>`;
+    } else {
+      const val = p.example !== undefined ? escapeHtml(String(p.example)) : (p.default !== undefined ? escapeHtml(String(p.default)) : '');
+      html += `<input type="text" id="${inputId}" data-in="${escapeHtml(p.in || 'query')}" data-name="${escapeHtml(name)}" placeholder="${escapeHtml(type)}" value="${val}">`;
+    }
+    html += `</div>`;
+  });
+  container.innerHTML = html;
+}
+
+/* Auth */
+const authType = document.getElementById('authType');
+const authBearer = document.getElementById('authBearer');
+const authApiKey = document.getElementById('authApiKey');
+const authBasic = document.getElementById('authBasic');
+
+function updateAuthFromSpec(security) {
+  // Simple heuristic: if security requirements exist, pre-select
+  if (!security || !security.length || Object.keys(security[0]).length === 0) {
+    authType.value = globalAuth.type;
+  } else {
+    const name = Object.keys(security[0])[0];
+    const def = (spec.components?.securitySchemes || spec.securityDefinitions || {})[name];
+    if (def) {
+      if (def.type === 'http' && def.scheme === 'bearer') authType.value = 'bearer';
+      else if (def.type === 'apiKey') authType.value = 'apikey';
+      else if (def.type === 'http' && def.scheme === 'basic') authType.value = 'basic';
+      else authType.value = 'none';
+    }
+  }
+  toggleAuth();
+}
+
+function toggleAuth() {
+  const v = authType.value;
+  authBearer.classList.toggle('hidden', v !== 'bearer');
+  authApiKey.classList.toggle('hidden', v !== 'apikey');
+  authBasic.classList.toggle('hidden', v !== 'basic');
+}
+authType.addEventListener('change', toggleAuth);
+
+document.getElementById('btnGlobalAuth').addEventListener('click', () => {
+  const type = prompt('認証タイプを選択: none, bearer, apikey, basic', globalAuth.type);
+  if (!type) return;
+  globalAuth.type = type;
+  if (type === 'bearer') globalAuth.bearer = prompt('Bearer Token を入力', globalAuth.bearer) || globalAuth.bearer;
+  if (type === 'apikey') globalAuth.apiKey = prompt('API Key を入力', globalAuth.apiKey) || globalAuth.apiKey;
+  if (type === 'basic') {
+    globalAuth.basicUser = prompt('Username', globalAuth.basicUser) || globalAuth.basicUser;
+    globalAuth.basicPass = prompt('Password', globalAuth.basicPass) || globalAuth.basicPass;
+  }
+  authType.value = globalAuth.type;
+  if (globalAuth.type === 'bearer') document.getElementById('bearerToken').value = globalAuth.bearer;
+  if (globalAuth.type === 'apikey') document.getElementById('apiKeyValue').value = globalAuth.apiKey;
+  if (globalAuth.type === 'basic') {
+    document.getElementById('basicUser').value = globalAuth.basicUser;
+    document.getElementById('basicPass').value = globalAuth.basicPass;
+  }
+  toggleAuth();
+  updateCurlPreview();
+});
+
+document.getElementById('btnGlobalServer').addEventListener('click', () => {
+  const url = prompt('ベースサーバー URL を入力', globalServer);
+  if (url === null) return;
+  globalServer = url;
+  if (selectedKey) {
+    const ep = endpoints.find(e => e.key === selectedKey);
+    if (ep) document.getElementById('serverUrl').value = globalServer.replace(/\/$/, '');
+  }
+  updateCurlPreview();
+});
+
+/* Tabs */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const name = tab.dataset.tab;
+    document.getElementById('tabBody').classList.toggle('hidden', name !== 'body');
+    document.getElementById('tabHeaders').classList.toggle('hidden', name !== 'headers');
+  });
+});
+
+/* Send request */
+document.getElementById('btnSend').addEventListener('click', async () => {
+  const ep = endpoints.find(e => e.key === selectedKey);
+  if (!ep) return;
+
+  const serverUrl = document.getElementById('serverUrl').value.trim();
+  if (!serverUrl) { alert('サーバー URL を入力してください'); return; }
+
+  let url = serverUrl + ep.path;
+  const method = ep.method;
+  const headers = new Headers();
+  headers.append('Accept', 'application/json');
+
+  // Auth
+  const aType = authType.value;
+  if (aType === 'bearer') {
+    const token = document.getElementById('bearerToken').value.trim();
+    if (token) headers.append('Authorization', 'Bearer ' + token);
+  } else if (aType === 'basic') {
+    const user = document.getElementById('basicUser').value.trim();
+    const pass = document.getElementById('basicPass').value.trim();
+    if (user) headers.append('Authorization', 'Basic ' + btoa(unescape(encodeURIComponent(user + ':' + pass))));
+  } else if (aType === 'apikey') {
+    const key = document.getElementById('apiKeyValue').value.trim();
+    if (key) {
+      // Try to find apiKey location from spec
+      const schemes = spec.components?.securitySchemes || spec.securityDefinitions || {};
+      const scheme = Object.values(schemes).find(s => s.type === 'apiKey');
+      if (scheme && scheme.in === 'header') {
+        headers.append(scheme.name || 'X-API-Key', key);
+      } else if (scheme && scheme.in === 'query') {
+        const u = new URL(url, window.location.href);
+        u.searchParams.append(scheme.name || 'api_key', key);
+        url = u.pathname + u.search;
+        // Re-apply origin if relative
+        if (!url.startsWith('http')) url = serverUrl + url;
+      } else {
+        headers.append('X-API-Key', key);
+      }
+    }
+  }
+
+  // Params
+  const query = new URLSearchParams();
+  const pathValues = {};
+  let bodyParamText = null;
+  document.querySelectorAll('#paramsContainer [data-in]').forEach(el => {
+    const pin = el.dataset.in;
+    const name = el.dataset.name;
+    const val = el.value;
+    if (!val && pin !== 'body') return;
+    if (pin === 'query') query.append(name, val);
+    if (pin === 'path') pathValues[name] = encodeURIComponent(val);
+    if (pin === 'body') bodyParamText = val;
+  });
+
+  Object.entries(pathValues).forEach(([k, v]) => {
+    url = url.replace('{' + k + '}', v);
+  });
+
+  if (query.toString()) {
+    url += (url.includes('?') ? '&' : '?') + query.toString();
+  }
+
+  // Body
+  let body = undefined;
+  if (['POST','PUT','PATCH'].includes(method)) {
+    // Prefer body parameter from paramsContainer if present
+    if (bodyParamText !== null && bodyParamText.trim()) {
+      headers.append('Content-Type', 'application/json');
+      body = bodyParamText.trim();
+    } else {
+      const bodyText = document.getElementById('requestBody').value.trim();
+      if (bodyText) {
+        headers.append('Content-Type', 'application/json');
+        body = bodyText;
+      }
+    }
+  }
+
+  const start = performance.now();
+  try {
+    const resp = await fetch(url, { method, headers, body });
+    const elapsed = Math.round(performance.now() - start);
+    const text = await resp.text();
+    let pretty = text;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch(e){}
+
+    document.getElementById('responseEmpty').classList.add('hidden');
+    document.getElementById('responseContent').classList.remove('hidden');
+
+    const statusEl = document.getElementById('respStatus');
+    statusEl.textContent = resp.status + ' ' + resp.statusText;
+    statusEl.className = 'status-badge ' + (resp.ok ? 'status-ok' : (resp.status < 500 ? 'status-warn' : 'status-err'));
+    document.getElementById('respTime').textContent = `${elapsed} ms`;
+    document.getElementById('respBody').textContent = pretty;
+
+    const headersObj = {};
+    resp.headers.forEach((v, k) => { headersObj[k] = v; });
+    document.getElementById('respHeaders').textContent = JSON.stringify(headersObj, null, 2);
+  } catch (err) {
+    document.getElementById('responseEmpty').classList.add('hidden');
+    document.getElementById('responseContent').classList.remove('hidden');
+    const statusEl = document.getElementById('respStatus');
+    statusEl.textContent = 'Network Error';
+    statusEl.className = 'status-badge status-err';
+    document.getElementById('respTime').textContent = '';
+    document.getElementById('respBody').textContent = 'Error: ' + err.message + '\n\nヒント: CORS 制限や Mixed Content (HTTPS/HTTP) の可能性があります。';
+    document.getElementById('respHeaders').textContent = '';
+  }
+});
+
+/* cURL */
+function buildCurl() {
+  const ep = endpoints.find(e => e.key === selectedKey);
+  if (!ep) return '';
+  const serverUrl = document.getElementById('serverUrl').value.trim();
+  if (!serverUrl) return '';
+
+  let url = serverUrl + ep.path;
+  const method = ep.method;
+  let lines = [`curl -X ${method} "${url}"`];
+
+  const aType = authType.value;
+  if (aType === 'bearer') {
+    const token = document.getElementById('bearerToken').value.trim();
+    if (token) lines.push(`  -H "Authorization: Bearer ${token}"`);
+  } else if (aType === 'basic') {
+    const user = document.getElementById('basicUser').value.trim();
+    const pass = document.getElementById('basicPass').value.trim();
+    if (user) lines.push(`  -u "${user}:${pass}"`);
+  } else if (aType === 'apikey') {
+    const key = document.getElementById('apiKeyValue').value.trim();
+    if (key) lines.push(`  -H "X-API-Key: ${key}"`);
+  }
+
+  lines.push(`  -H "Accept: application/json"`);
+
+  const query = new URLSearchParams();
+  document.querySelectorAll('#paramsContainer [data-in="query"]').forEach(el => {
+    if (el.value) query.append(el.dataset.name, el.value);
+  });
+  if (query.toString()) {
+    lines[0] = `curl -X ${method} "${url}?${query.toString()}"`;
+  }
+
+  document.querySelectorAll('#paramsContainer [data-in="path"]').forEach(el => {
+    if (el.value) {
+      lines[0] = lines[0].replace('{' + el.dataset.name + '}', el.value);
+    }
+  });
+
+  if (['POST','PUT','PATCH'].includes(method)) {
+    // Check for body parameter in paramsContainer first
+    const bodyParam = document.querySelector('#paramsContainer [data-in="body"]');
+    const bodyText = bodyParam ? bodyParam.value.trim() : document.getElementById('requestBody').value.trim();
+    if (bodyText) {
+      lines.push(`  -H "Content-Type: application/json"`);
+      lines.push(`  -d '${bodyText.replace(/'/g, "'\\''")}'`);
+    }
+  }
+
+  return lines.join(' \
+');
+}
+
+function updateCurlPreview() {
+  document.getElementById('curlPreview').textContent = buildCurl() || 'curl -X GET "https://example.com/api"';
+}
+
+// Update curl when inputs change
+document.addEventListener('input', e => {
+  if (e.target.closest('#testerPanel')) updateCurlPreview();
+});
+
+document.getElementById('btnCopyCurl').addEventListener('click', () => {
+  const text = buildCurl();
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => alert('cURL をコピーしました'));
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  if (selectedKey) selectEndpoint(selectedKey);
+});
+
+/* Keyboard shortcut */
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    document.getElementById('btnSend').click();
+  }
+});
+</script>
+</body>
+</html>
