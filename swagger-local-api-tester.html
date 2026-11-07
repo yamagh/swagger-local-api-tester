@@ -442,6 +442,7 @@ pre.codeblock {
       </div>
       <div style="display:flex; gap:.5rem;">
         <button class="btn btn-sm" id="btnGlobalAuth" title="認証設定">🔑 認証</button>
+        <button class="btn btn-sm" id="btnClearAuth" title="保存された認証情報を削除">🗑 認証クリア</button>
         <button class="btn btn-sm" id="btnGlobalServer" title="サーバー設定">🌐 サーバー</button>
       </div>
     </div>
@@ -565,7 +566,7 @@ let globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPas
 let globalServer = '';
 
 /* Persistence (survive reload via LocalStorage) */
-const STORAGE_KEYS = { spec: 'swlt.spec', server: 'swlt.server', serverUrl: 'swlt.serverUrl' };
+const STORAGE_KEYS = { spec: 'swlt.spec', server: 'swlt.server', serverUrl: 'swlt.serverUrl', auth: 'swlt.auth' };
 function saveSpecToStorage(json) {
   try { localStorage.setItem(STORAGE_KEYS.spec, JSON.stringify(json)); } catch (e) {}
 }
@@ -576,12 +577,40 @@ function saveServerToStorage() {
     if (su && su.value) localStorage.setItem(STORAGE_KEYS.serverUrl, su.value);
   } catch (e) {}
 }
+function saveAuthToStorage() {
+  try { localStorage.setItem(STORAGE_KEYS.auth, JSON.stringify(globalAuth)); } catch (e) {}
+}
+function clearAuthFromStorage() {
+  try { localStorage.removeItem(STORAGE_KEYS.auth); } catch (e) {}
+}
+function resetGlobalAuth() {
+  globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
+}
+function applyAuthToFields() {
+  authType.value = globalAuth.type;
+  document.getElementById('bearerToken').value = globalAuth.bearer;
+  document.getElementById('apiKeyValue').value = globalAuth.apiKey;
+  document.getElementById('basicUser').value = globalAuth.basicUser;
+  document.getElementById('basicPass').value = globalAuth.basicPass;
+  toggleAuth();
+}
+function syncAuthFieldsToGlobal() {
+  globalAuth.type = authType.value;
+  globalAuth.bearer = document.getElementById('bearerToken').value;
+  globalAuth.apiKey = document.getElementById('apiKeyValue').value;
+  globalAuth.basicUser = document.getElementById('basicUser').value;
+  globalAuth.basicPass = document.getElementById('basicPass').value;
+  saveAuthToStorage();
+}
 function restoreState() {
   try {
     const savedServer = localStorage.getItem(STORAGE_KEYS.server);
     if (savedServer !== null) globalServer = savedServer;
+    const savedAuth = localStorage.getItem(STORAGE_KEYS.auth);
+    if (savedAuth) globalAuth = Object.assign({}, globalAuth, JSON.parse(savedAuth));
     const savedSpec = localStorage.getItem(STORAGE_KEYS.spec);
     if (savedSpec) loadSpec(JSON.parse(savedSpec));
+    applyAuthToFields();
   } catch (e) {}
 }
 
@@ -835,6 +864,9 @@ function toggleAuth() {
   authBasic.classList.toggle('hidden', v !== 'basic');
 }
 authType.addEventListener('change', toggleAuth);
+const authPanel = document.getElementById('authPanel');
+authPanel.addEventListener('input', syncAuthFieldsToGlobal);
+authPanel.addEventListener('change', syncAuthFieldsToGlobal);
 
 document.getElementById('btnGlobalAuth').addEventListener('click', () => {
   const type = prompt('認証タイプを選択: none, bearer, apikey, basic', globalAuth.type);
@@ -854,6 +886,15 @@ document.getElementById('btnGlobalAuth').addEventListener('click', () => {
     document.getElementById('basicPass').value = globalAuth.basicPass;
   }
   toggleAuth();
+  saveAuthToStorage();
+  updateCurlPreview();
+});
+
+document.getElementById('btnClearAuth').addEventListener('click', () => {
+  if (!confirm('保存された認証情報を削除しますか？')) return;
+  clearAuthFromStorage();
+  resetGlobalAuth();
+  applyAuthToFields();
   updateCurlPreview();
 });
 
