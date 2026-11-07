@@ -338,6 +338,23 @@ pre.codeblock {
   word-break: break-word;
 }
 
+/* File converter result */
+.fc-result {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  background: #090c10;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .8rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: #e6edf3;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* Two columns in main */
 .main-scroll {
   flex: 1;
@@ -514,6 +531,7 @@ pre.codeblock {
         <div class="main-sub" id="mainSub">swagger.json を読み込むと、ここでリクエストのテストができます</div>
       </div>
       <div style="display:flex; gap:.5rem;">
+        <button class="btn btn-sm" id="btnFileConverter" title="ファイルを Base64 に変換">📎 ファイル変換</button>
         <button class="btn btn-sm" id="btnSettings" title="設定">⚙️ 設定</button>
       </div>
     </div>
@@ -689,6 +707,39 @@ pre.codeblock {
   </div>
 </div>
 
+
+<div class="modal-overlay" id="fileConverterModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">📎 ファイルを Base64 に変換</div>
+      <button class="modal-close" id="btnCloseFileConverter" title="閉じる">✕</button>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">ファイルを選択</div>
+      <div class="upload-area" id="fcDropZone">
+        <input type="file" id="fcFileInput">
+        <div class="upload-icon">📁</div>
+        <div class="upload-text">クリックまたはドラッグでファイルを選択</div>
+        <div class="upload-hint">バイナリ（画像・PDF 等）を Base64 へ変換します</div>
+      </div>
+      <div id="fcMeta" style="display:none; font-size:.8rem; color:var(--muted); margin-top:.6rem; font-family:var(--font-mono);"></div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">出力</div>
+      <div class="form-row">
+        <label style="display:flex; align-items:center; gap:.4rem; cursor:pointer;">
+          <input type="checkbox" id="fcDataUrl">
+          <span>data URL プレフィックス（<code>data:&lt;mime&gt;;base64,</code>）を追加</span>
+        </label>
+      </div>
+      <textarea id="fcResult" class="fc-result" readonly placeholder="ここに Base64 が生成されます"></textarea>
+      <div id="fcCopyHint" style="display:none; margin-top:.4rem; font-size:.8rem; color:var(--success);">✅ コピーしました</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btnFCCopy">📋 コピー</button>
+    </div>
+  </div>
+</div>
 <script>
 /* State */
 let spec = null;
@@ -1468,6 +1519,75 @@ settingsModal.addEventListener('click', e => { if (e.target === settingsModal) c
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings(); });
 document.getElementById('btnClearDefaults').addEventListener('click', clearDefaults);
 Settings.wire();
+
+/* ===== File → Base64 converter ===== */
+const fileConverterModal = document.getElementById('fileConverterModal');
+const fcState = { base64: '', file: null };
+
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function fcFormatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+function fcRenderOutput() {
+  const el = document.getElementById('fcResult');
+  const useDataUrl = document.getElementById('fcDataUrl').checked;
+  const mime = (fcState.file && fcState.file.type) ? fcState.file.type : 'application/octet-stream';
+  el.value = useDataUrl ? 'data:' + mime + ';base64,' + fcState.base64 : fcState.base64;
+  fcUpdateMeta();
+}
+
+function fcUpdateMeta() {
+  const meta = document.getElementById('fcMeta');
+  if (!fcState.file) { meta.style.display = 'none'; return; }
+  const f = fcState.file;
+  meta.style.display = 'block';
+  meta.textContent = f.name + ' · ' + fcFormatBytes(f.size) + (f.type ? ' · ' + f.type : '') + ' · 出力 ' + document.getElementById('fcResult').value.length + ' 文字';
+}
+
+function fcLoadFile(file) {
+  if (!file) return;
+  fcState.file = file;
+  const reader = new FileReader();
+  reader.onload = () => { fcState.base64 = arrayBufferToBase64(reader.result); fcRenderOutput(); };
+  reader.onerror = () => alert('ファイルの読み込みに失敗しました: ' + (file ? file.name : ''));
+  reader.readAsArrayBuffer(file);
+}
+
+function openFileConverter() { fileConverterModal.classList.add('open'); }
+function closeFileConverter() { fileConverterModal.classList.remove('open'); }
+
+const fcDropZone = document.getElementById('fcDropZone');
+const fcFileInput = document.getElementById('fcFileInput');
+fcFileInput.addEventListener('change', e => fcLoadFile(e.target.files[0]));
+fcDropZone.addEventListener('dragover', e => { e.preventDefault(); fcDropZone.classList.add('dragover'); });
+fcDropZone.addEventListener('dragleave', () => fcDropZone.classList.remove('dragover'));
+fcDropZone.addEventListener('drop', e => { e.preventDefault(); fcDropZone.classList.remove('dragover'); fcLoadFile(e.dataTransfer.files[0]); });
+document.getElementById('fcDataUrl').addEventListener('change', fcRenderOutput);
+document.getElementById('btnFCCopy').addEventListener('click', () => {
+  const text = document.getElementById('fcResult').value;
+  if (!text) { alert('変換するファイルを選択してください'); return; }
+  const hint = document.getElementById('fcCopyHint');
+  navigator.clipboard.writeText(text).then(() => {
+    hint.style.display = 'block';
+    setTimeout(() => { hint.style.display = 'none'; }, 1500);
+  }).catch(() => alert('コピーに失敗しました'));
+});
+document.getElementById('btnFileConverter').addEventListener('click', openFileConverter);
+document.getElementById('btnCloseFileConverter').addEventListener('click', closeFileConverter);
+fileConverterModal.addEventListener('click', e => { if (e.target === fileConverterModal) closeFileConverter(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && fileConverterModal.classList.contains('open')) closeFileConverter(); });
 
 /* Keyboard shortcut */
 document.addEventListener('keydown', e => {
