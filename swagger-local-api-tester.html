@@ -296,6 +296,41 @@ input:focus, select:focus, textarea:focus {
 .btn-primary:hover { background: #79b8ff; border-color: #79b8ff; }
 .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn-sm { padding: .4rem .7rem; font-size: 0.82rem; }
+.btn:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  display: none;
+  animation: btn-spin .7s linear infinite;
+}
+.btn.is-loading .btn-spinner { display: inline-block; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+/* Response pending (in-flight) state */
+.response-pending {
+  display: flex; align-items: center; gap: .5rem;
+  color: var(--muted); font-size: .9rem;
+}
+.response-pending .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: btn-spin .7s linear infinite;
+}
+.response-pending .spinner-label {
+  color: var(--accent);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: .85rem;
+}
+
 
 /* Method badge big */
 .method-big {
@@ -606,7 +641,10 @@ pre.codeblock {
               </div>
 
               <div style="display:flex; gap:.5rem; margin-top:.4rem;">
-                <button class="btn btn-primary" id="btnSend">▶ 送信</button>
+                <button class="btn btn-primary" id="btnSend">
+                  <span class="btn-spinner"></span>
+                  <span class="btn-label">▶ 送信</span>
+                </button>
                 <button class="btn" id="btnCopyCurl">📋 cURL をコピー</button>
                 <button class="btn" id="btnReset">↺ リセット</button>
               </div>
@@ -617,6 +655,10 @@ pre.codeblock {
             <div class="panel">
               <div class="panel-title">📡 レスポンス</div>
               <div id="responseEmpty" style="color:var(--muted); font-size:0.9rem;">リクエストを送信すると結果が表示されます</div>
+              <div id="responsePending" class="response-pending hidden">
+                <span class="spinner"></span>
+                <span class="spinner-label">実行中...</span>
+              </div>
               <div id="responseContent" class="hidden">
                 <div class="response-meta">
                   <span id="respStatus" class="status-badge status-ok">200 OK</span>
@@ -1259,6 +1301,22 @@ document.getElementById('btnSend').addEventListener('click', async () => {
   const cur = currentRequest();
   if (!cur) { alert('サーバー URL を入力してください'); return; }
   const { ep, server, req } = cur;
+
+  const btn = document.getElementById('btnSend');
+  const label = btn.querySelector('.btn-label');
+  const originalLabel = label.textContent;
+  const responseEmpty = document.getElementById('responseEmpty');
+  const responseContent = document.getElementById('responseContent');
+  const responsePending = document.getElementById('responsePending');
+
+  // 実行中状態を表示
+  btn.disabled = true;
+  btn.classList.add('is-loading');
+  label.textContent = '実行中...';
+  responseEmpty.classList.add('hidden');
+  responseContent.classList.add('hidden');
+  responsePending.classList.remove('hidden');
+
   const start = performance.now();
   try {
     const resp = await fetch(req.url, { method: req.method, headers: new Headers(req.headers), body: req.body });
@@ -1275,9 +1333,13 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     renderResponse({ error: err.message });
     History.record(cur, { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message });
     renderHistory();
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('is-loading');
+    label.textContent = originalLabel;
+    responsePending.classList.add('hidden');
   }
 });
-  
 /* cURL */
 function buildCurl() {
   const cur = currentRequest();
