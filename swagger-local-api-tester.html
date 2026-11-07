@@ -153,6 +153,14 @@ body {
   top: 0;
   background: var(--surface);
   z-index: 1;
+  cursor: pointer;
+  user-select: none;
+}
+.endpoint-group-title:hover { color: var(--ink); }
+.endpoint-group-title.active {
+  color: var(--accent);
+  background: var(--accent-weak);
+  font-weight: 700;
 }
 .endpoint-item {
   display: flex;
@@ -399,6 +407,53 @@ pre.codeblock {
 
 /* Required asterisk */
 .req { color: var(--danger); }
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 520px; width: 90%;
+  max-height: 85vh; overflow-y: auto;
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.modal-title { font-size: 1.1rem; font-weight: 700; color: var(--ink-strong); }
+.modal-close { background: none; border: none; color: var(--muted); font-size: 1.2rem; cursor: pointer; padding: .2rem .5rem; border-radius: 6px; }
+.modal-close:hover { color: var(--ink); background: var(--surface-hover); }
+.modal-section { margin-bottom: 1.2rem; }
+.modal-section-title { font-size: .8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: .5rem; }
+.modal-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.url-area { margin: 0 var(--space) .3rem; padding: .6rem; display: flex; flex-direction: column; gap: .4rem; }
+.url-area-label { font-size: .75rem; color: var(--muted); }
+.url-row { display: flex; gap: .4rem; }
+.url-row input { flex: 1; min-width: 0; }
+.history-section { border-top: 1px solid var(--border); display: flex; flex-direction: column; max-height: 300px; overflow: hidden; }
+.history-header { display: flex; align-items: center; justify-content: space-between; padding: .5rem var(--space); border-bottom: 1px solid var(--border); background: var(--surface); }
+.history-title { font-size: .78rem; font-weight: 700; color: var(--ink-strong); text-transform: uppercase; letter-spacing: .06em; }
+.history-list { flex: 1; overflow-y: auto; padding: .3rem var(--space); }
+.history-empty { font-size: .8rem; color: var(--muted); padding: 1rem .5rem; text-align: center; }
+.history-item { padding: .5rem .6rem; border-radius: 8px; cursor: pointer; border: 1px solid transparent; transition: background .15s; margin-bottom: .3rem; }
+.history-item:hover { background: var(--surface-hover); border-color: var(--border); }
+.history-line { display: flex; align-items: center; gap: .5rem; font-size: .82rem; }
+.history-path { color: var(--ink-strong); word-break: break-all; flex: 1; min-width: 0; }
+.hist-status { font-family: var(--font-mono); font-weight: 700; font-size: .78rem; }
+.hist-ok { color: var(--success); }
+.hist-warn { color: var(--warning); }
+.hist-err { color: var(--danger); }
+.hist-time { font-size: .74rem; color: var(--muted); white-space: nowrap; }
+.hist-meta { font-size: .72rem; color: var(--muted); margin-top: .2rem; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -419,6 +474,14 @@ pre.codeblock {
       <div class="upload-hint">またはここにドラッグ＆ドロップ</div>
     </div>
 
+    <div class="url-area">
+      <div class="url-area-label">または URL を指定して取得</div>
+      <div class="url-row">
+        <input type="url" id="specUrlInput" placeholder="https://example.com/openapi.json">
+        <button class="btn btn-sm" id="btnFetchUrl">取得</button>
+      </div>
+    </div>
+
     <div class="search-box">
       <input type="text" id="searchInput" placeholder="API を検索..." autocomplete="off">
     </div>
@@ -430,6 +493,16 @@ pre.codeblock {
           <div style="color:var(--ink-strong); font-weight:700;">ファイルを読み込んでください</div>
           <div style="font-size:0.85rem; margin-top:.3rem;">JSON ファイルを選択すると API 一覧が表示されます</div>
         </div>
+      </div>
+    </div>
+
+    <div class="history-section" id="historySection">
+      <div class="history-header">
+        <span class="history-title">🕑 実行履歴</span>
+        <button class="btn btn-sm" id="btnClearHistory">クリア</button>
+      </div>
+      <div class="history-list" id="historyList">
+        <div class="history-empty">履歴なし</div>
       </div>
     </div>
   </aside>
@@ -444,6 +517,7 @@ pre.codeblock {
         <button class="btn btn-sm" id="btnGlobalAuth" title="認証設定">🔑 認証</button>
         <button class="btn btn-sm" id="btnClearAuth" title="保存された認証情報を削除">🗑 認証クリア</button>
         <button class="btn btn-sm" id="btnGlobalServer" title="サーバー設定">🌐 サーバー</button>
+        <button class="btn btn-sm" id="btnSettings" title="設定">⚙️ 設定</button>
       </div>
     </div>
 
@@ -557,16 +631,82 @@ pre.codeblock {
   </main>
 </div>
 
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">⚙️ 設定</div>
+      <button class="modal-close" id="btnCloseSettings" title="閉じる">✕</button>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">swagger.json</div>
+      <div class="form-row">
+        <label>デフォルト URL</label>
+        <input type="url" id="setDefaultSpecUrl" placeholder="https://example.com/openapi.json">
+      </div>
+      <div class="form-row">
+        <label>認証タイプ（swagger.json 取得時）</label>
+        <select id="setSpecAuthType">
+          <option value="none">なし</option>
+          <option value="bearer">Bearer Token</option>
+          <option value="apikey">API Key</option>
+          <option value="basic">Basic Auth</option>
+        </select>
+      </div>
+      <div class="form-row hidden" id="setSpecAuthBearer"><label>Token</label><input type="password" id="setSpecBearer" placeholder="token"></div>
+      <div class="form-row hidden" id="setSpecAuthApiKey"><label>API Key</label><input type="password" id="setSpecApiKey" placeholder="api-key"></div>
+      <div class="form-row hidden" id="setSpecAuthBasic"><label>Username</label><input type="text" id="setSpecBasicUser" placeholder="username"><label style="margin-top:.4rem;">Password</label><input type="password" id="setSpecBasicPass" placeholder="password"></div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">サーバー</div>
+      <div class="form-row">
+        <label>デフォルト URL</label>
+        <input type="url" id="setDefaultServer" placeholder="https://api.example.com/v1">
+      </div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">認証（デフォルト情報）</div>
+      <div class="form-row">
+        <label>認証タイプ</label>
+        <select id="setDefaultAuthType">
+          <option value="none">なし</option>
+          <option value="bearer">Bearer Token</option>
+          <option value="apikey">API Key</option>
+          <option value="basic">Basic Auth</option>
+        </select>
+        <small>値はリクエスト時に認証フォームから入力されます（保存しません）</small>
+      </div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">実行履歴</div>
+      <div class="form-row">
+        <label>最大件数（1〜100）</label>
+        <input type="number" id="setHistoryMax" min="1" max="100" value="20">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="btnClearDefaults">デフォルトをクリア</button>
+      <button class="btn btn-primary" id="btnApplyDefaults">デフォルトに適用</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* State */
 let spec = null;
 let endpoints = [];
 let selectedKey = null;
+let selectedGroup = null;
+let selectedEndpointFilter = null;
 let globalAuth = { type: 'none', bearer: '', apiKey: '', basicUser: '', basicPass: '' };
 let globalServer = '';
 
 /* Persistence (survive reload via LocalStorage) */
-const STORAGE_KEYS = { spec: 'swlt.spec', server: 'swlt.server', serverUrl: 'swlt.serverUrl', auth: 'swlt.auth' };
+const STORAGE_KEYS = {
+  spec: 'swlt.spec', server: 'swlt.server', serverUrl: 'swlt.serverUrl', auth: 'swlt.auth',
+  specUrl: 'swlt.specUrl', history: 'swlt.history',
+  defaultSpecUrl: 'swlt.defaultSpecUrl', defaultServer: 'swlt.defaultServer',
+  defaultAuth: 'swlt.defaultAuth', specAuth: 'swlt.specAuth', historyMax: 'swlt.historyMax',
+};
 function saveSpecToStorage(json) {
   try { localStorage.setItem(STORAGE_KEYS.spec, JSON.stringify(json)); } catch (e) {}
 }
@@ -622,8 +762,16 @@ function restoreState() {
     const savedAuth = localStorage.getItem(STORAGE_KEYS.auth);
     if (savedAuth) globalAuth = Object.assign({}, globalAuth, JSON.parse(savedAuth));
     const savedSpec = localStorage.getItem(STORAGE_KEYS.spec);
-    if (savedSpec) loadSpec(JSON.parse(savedSpec));
+    if (savedSpec) {
+      loadSpec(JSON.parse(savedSpec));
+    } else {
+      // spec 未保持時のみ、設定された spec URL から自動取得
+      const savedSpecUrl = localStorage.getItem(STORAGE_KEYS.specUrl);
+      if (savedSpecUrl) loadSpecFromURL(savedSpecUrl, getSpecAuthHeaders());
+    }
     applyAuthToFields();
+    const urlInput = document.getElementById('specUrlInput');
+    if (urlInput) urlInput.value = localStorage.getItem(STORAGE_KEYS.specUrl) || '';
   } catch (e) {}
 }
 
@@ -668,6 +816,8 @@ function loadSpec(json) {
   spec = json;
   saveSpecToStorage(json);
   endpoints = [];
+  selectedGroup = null;
+  selectedEndpointFilter = null;
   const paths = spec.paths || {};
   const base = spec.basePath || '';
   Object.entries(paths).forEach(([path, methods]) => {
@@ -708,7 +858,7 @@ function renderList() {
   // Group by first tag or path prefix
   const groups = {};
   filtered.forEach(ep => {
-    const tag = (ep.op.tags && ep.op.tags[0]) || ep.path.split('/')[1] || 'default';
+    const tag = groupTagOf(ep);
     if (!groups[tag]) groups[tag] = [];
     groups[tag].push(ep);
   });
@@ -716,7 +866,7 @@ function renderList() {
   let html = '';
   Object.entries(groups).forEach(([tag, eps]) => {
     html += `<div class="endpoint-group">
-      <div class="endpoint-group-title">${escapeHtml(tag)}</div>`;
+      <div class="endpoint-group-title ${tag === selectedGroup ? 'active' : ''}" data-group="${escapeHtml(tag)}">${escapeHtml(tag)}</div>`;
     eps.forEach(ep => {
       const active = ep.key === selectedKey ? 'active' : '';
       html += `
@@ -733,7 +883,20 @@ function renderList() {
   endpointList.innerHTML = html;
 
   endpointList.querySelectorAll('.endpoint-item').forEach(el => {
-    el.addEventListener('click', () => selectEndpoint(el.dataset.key));
+    el.addEventListener('click', () => {
+      selectedEndpointFilter = el.dataset.key;
+      selectedGroup = null;
+      selectEndpoint(el.dataset.key);
+    });
+  });
+  endpointList.querySelectorAll('.endpoint-group-title').forEach(el => {
+    el.addEventListener('click', () => {
+      const g = el.dataset.group;
+      selectedEndpointFilter = null;
+      selectedGroup = (selectedGroup === g) ? null : g;
+      renderList();
+      renderHistory();
+    });
   });
 }
 
@@ -741,6 +904,15 @@ searchInput.addEventListener('input', renderList);
 
 function escapeHtml(t) {
   return String(t).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function groupTagOf(ep) {
+  return (ep.op.tags && ep.op.tags[0]) || ep.path.split('/')[1] || 'default';
+}
+function groupOfEntry(entry) {
+  if (entry.group) return entry.group;
+  const ep = endpoints.find(e => e.key === (entry.method + ' ' + entry.path)) || endpoints.find(e => e.path === entry.path);
+  return ep ? groupTagOf(ep) : null;
 }
 
 /* Select endpoint */
@@ -788,6 +960,7 @@ function selectEndpoint(key) {
   }
 
   updateCurlPreview();
+  renderHistory();
 }
 
 function generateExample(requestBody) {
@@ -1019,6 +1192,18 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     }
   }
 
+  // 実行履歴用スナップショット（認証値は保存しない）
+  const histQuery = {};
+  document.querySelectorAll('#paramsContainer [data-in="query"]').forEach(el => { if (el.value) histQuery[el.dataset.name] = el.value; });
+  const histPath = {};
+  document.querySelectorAll('#paramsContainer [data-in="path"]').forEach(el => { if (el.value) histPath[el.dataset.name] = el.value; });
+  const histBody = (() => {
+    const bp = document.querySelector('#paramsContainer [data-in="body"]');
+    if (bp) return bp.value;
+    return ['POST','PUT','PATCH'].includes(method) ? (document.getElementById('requestBody').value || '') : '';
+  })();
+  const historyParams = { query: histQuery, path: histPath, body: histBody, auth: { type: aType } };
+
   const start = performance.now();
   try {
     const resp = await fetch(url, { method, headers, body });
@@ -1039,6 +1224,15 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     const headersObj = {};
     resp.headers.forEach((v, k) => { headersObj[k] = v; });
     document.getElementById('respHeaders').textContent = JSON.stringify(headersObj, null, 2);
+
+    saveHistoryEntry({
+      id: uuid(), timestamp: new Date().toISOString(),
+      method, path: ep.path, serverUrl, fullUrl: url,
+      group: groupTagOf(ep),
+      params: historyParams, auth: historyParams.auth,
+      response: { status: resp.status, statusText: resp.statusText, time: elapsed, body: text, headers: headersObj, error: '' },
+    });
+    renderHistory();
   } catch (err) {
     document.getElementById('responseEmpty').classList.add('hidden');
     document.getElementById('responseContent').classList.remove('hidden');
@@ -1048,6 +1242,15 @@ document.getElementById('btnSend').addEventListener('click', async () => {
     document.getElementById('respTime').textContent = '';
     document.getElementById('respBody').textContent = 'Error: ' + err.message + '\n\nヒント: CORS 制限や Mixed Content (HTTPS/HTTP) の可能性があります。';
     document.getElementById('respHeaders').textContent = '';
+
+    saveHistoryEntry({
+      id: uuid(), timestamp: new Date().toISOString(),
+      method, path: ep.path, serverUrl, fullUrl: url,
+      group: groupTagOf(ep),
+      params: historyParams, auth: historyParams.auth,
+      response: { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message },
+    });
+    renderHistory();
   }
 });
 
@@ -1125,6 +1328,241 @@ document.getElementById('btnReset').addEventListener('click', () => {
   if (selectedKey) selectEndpoint(selectedKey);
 });
 
+/* ===== Feature 1: load spec from URL (T5/T13) ===== */
+function getSpecAuth() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.specAuth) || '{}') || {}; } catch (e) { return {}; }
+}
+function getSpecAuthHeaders() {
+  const a = getSpecAuth();
+  const headers = new Headers();
+  let has = false;
+  if (a.type === 'bearer' && a.bearer) { headers.append('Authorization', 'Bearer ' + a.bearer); has = true; }
+  else if (a.type === 'apikey' && a.apiKey) { headers.append('X-API-Key', a.apiKey); has = true; }
+  else if (a.type === 'basic' && a.basicUser) { headers.append('Authorization', 'Basic ' + btoa(unescape(encodeURIComponent(a.basicUser + ':' + (a.basicPass || ''))))); has = true; }
+  return has ? headers : null;
+}
+async function loadSpecFromURL(url, headers) {
+  const input = document.getElementById('specUrlInput');
+  const btn = document.getElementById('btnFetchUrl');
+  const label = document.querySelector('.url-area-label');
+  const original = label ? label.textContent : '';
+  if (label) label.textContent = '読み込み中...';
+  if (btn) btn.disabled = true;
+  try {
+    const reqHeaders = new Headers();
+    if (headers) headers.forEach((v, k) => reqHeaders.append(k, v));
+    const resp = await fetch(url, { headers: reqHeaders });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (resp.statusText || ''));
+    const json = await resp.json();
+    loadSpec(json);
+    try { localStorage.setItem(STORAGE_KEYS.specUrl, url); } catch (e) {}
+    if (input) input.value = url;
+  } catch (err) {
+    alert('URL から取得に失敗: ' + err.message);
+  } finally {
+    if (label) label.textContent = original;
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ===== Feature 2/3: execution history (T7/T9/T10) ===== */
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now() + '-' + Math.random().toString(36).slice(2);
+}
+function getHistoryMax() {
+  const n = parseInt(localStorage.getItem(STORAGE_KEYS.historyMax) || '', 10);
+  return (n && n >= 1 && n <= 100) ? n : 20;
+}
+function getHistory() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.history);
+    const arr = raw ? JSON.parse(raw) : [];
+    return arr.slice().reverse();
+  } catch (e) { return []; }
+}
+function saveHistoryEntry(entry) {
+  let list = [];
+  try { const raw = localStorage.getItem(STORAGE_KEYS.history); if (raw) list = JSON.parse(raw); } catch (e) {}
+  list.push(entry);
+  const max = getHistoryMax();
+  while (list.length > max) list.shift();
+  try { localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(list)); } catch (e) {}
+}
+function clearHistory() {
+  try { localStorage.removeItem(STORAGE_KEYS.history); } catch (e) {}
+  renderHistory();
+}
+function statusClassFor(s) {
+  if (!s) return 'hist-err';
+  return s < 300 ? 'hist-ok' : (s < 500 ? 'hist-warn' : 'hist-err');
+}
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  if (!list) return;
+  let items = getHistory();
+  if (selectedEndpointFilter) {
+    items = items.filter(e => (e.method + ' ' + e.path) === selectedEndpointFilter);
+  } else if (selectedGroup) {
+    items = items.filter(e => groupOfEntry(e) === selectedGroup);
+  }
+  if (!items.length) {
+    let msg = '履歴なし';
+    if (selectedEndpointFilter) msg = 'このエンドポイントの実行履歴はありません';
+    else if (selectedGroup) msg = 'このグループの履歴はありません';
+    list.innerHTML = '<div class="history-empty">' + msg + '</div>';
+    return;
+  }
+  list.innerHTML = items.map(e => {
+    const time = new Date(e.timestamp).toLocaleTimeString();
+    const s = e.response ? e.response.status : 0;
+    const cls = statusClassFor(s);
+    const statusText = (e.response && e.response.error) ? 'ERR' : (String(s) + ((e.response && e.response.statusText) ? ' ' + e.response.statusText : ''));
+    const ms = (e.response && e.response.time) ? e.response.time + 'ms' : '';
+    return `<div class="history-item" data-id="${escapeHtml(e.id)}">
+      <div class="history-line">
+        <span class="method m-${e.method.toLowerCase()}">${escapeHtml(e.method)}</span>
+        <span class="history-path">${escapeHtml(e.path)}</span>
+        <span class="hist-status ${cls}">${escapeHtml(String(statusText))}</span>
+        ${ms ? `<span class="hist-time">${ms}</span>` : ''}
+      </div>
+      <div class="hist-meta">${time} · ${escapeHtml(e.serverUrl || '')}</div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.history-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const entry = getHistory().find(x => x.id === el.dataset.id);
+      if (entry) applyHistoryEntry(entry);
+    });
+  });
+}
+function applyHistoryEntry(entry) {
+  const key = entry.method + ' ' + entry.path;
+  const ep = endpoints.find(e => e.key === key);
+  if (!ep) { alert('この履歴のエンドポイントが現在の spec に存在しません'); return; }
+  selectEndpoint(ep.key);
+  const p = entry.params || {};
+  if (p.query) {
+    document.querySelectorAll('#paramsContainer [data-in="query"]').forEach(el => {
+      if (p.query[el.dataset.name] !== undefined) el.value = p.query[el.dataset.name];
+    });
+  }
+  if (p.path) {
+    document.querySelectorAll('#paramsContainer [data-in="path"]').forEach(el => {
+      if (p.path[el.dataset.name] !== undefined) el.value = p.path[el.dataset.name];
+    });
+  }
+  if (p.body) {
+    const bodyParam = document.querySelector('#paramsContainer [data-in="body"]');
+    if (bodyParam) bodyParam.value = p.body;
+    else document.getElementById('requestBody').value = p.body;
+  }
+  if (entry.serverUrl) {
+    const su = document.getElementById('serverUrl');
+    const target = entry.serverUrl.replace(/\/$/, '');
+    if (su.value !== target && confirm('サーバー URL を ' + target + ' に変更しますか？')) {
+      su.value = target;
+      saveServerToStorage();
+    }
+  }
+  updateCurlPreview();
+}
+
+/* ===== Feature 4: settings modal (T11/T12) ===== */
+const settingsModal = document.getElementById('settingsModal');
+function toggleSpecAuth() {
+  const v = document.getElementById('setSpecAuthType').value;
+  document.getElementById('setSpecAuthBearer').classList.toggle('hidden', v !== 'bearer');
+  document.getElementById('setSpecAuthApiKey').classList.toggle('hidden', v !== 'apikey');
+  document.getElementById('setSpecAuthBasic').classList.toggle('hidden', v !== 'basic');
+}
+function saveSpecAuth() {
+  try {
+    localStorage.setItem(STORAGE_KEYS.specAuth, JSON.stringify({
+      type: document.getElementById('setSpecAuthType').value,
+      bearer: document.getElementById('setSpecBearer').value,
+      apiKey: document.getElementById('setSpecApiKey').value,
+      basicUser: document.getElementById('setSpecBasicUser').value,
+      basicPass: document.getElementById('setSpecBasicPass').value,
+    }));
+  } catch (e) {}
+}
+function fillSettingsFromStorage() {
+  document.getElementById('setDefaultSpecUrl').value = localStorage.getItem(STORAGE_KEYS.defaultSpecUrl) || '';
+  document.getElementById('setDefaultServer').value = localStorage.getItem(STORAGE_KEYS.defaultServer) || '';
+  document.getElementById('setHistoryMax').value = String(getHistoryMax());
+  const specAuth = getSpecAuth();
+  document.getElementById('setSpecAuthType').value = specAuth.type || 'none';
+  document.getElementById('setSpecBearer').value = specAuth.bearer || '';
+  document.getElementById('setSpecApiKey').value = specAuth.apiKey || '';
+  document.getElementById('setSpecBasicUser').value = specAuth.basicUser || '';
+  document.getElementById('setSpecBasicPass').value = specAuth.basicPass || '';
+  const defAuth = JSON.parse(localStorage.getItem(STORAGE_KEYS.defaultAuth) || 'null');
+  document.getElementById('setDefaultAuthType').value = (defAuth && defAuth.type) || 'none';
+  toggleSpecAuth();
+}
+function openSettings() { fillSettingsFromStorage(); settingsModal.classList.add('open'); }
+function closeSettings() { settingsModal.classList.remove('open'); }
+function applyDefaults() {
+  let applied = false;
+  const specUrl = localStorage.getItem(STORAGE_KEYS.defaultSpecUrl);
+  if (specUrl) {
+    try { localStorage.setItem(STORAGE_KEYS.specUrl, specUrl); } catch (e) {}
+    const i = document.getElementById('specUrlInput'); if (i) i.value = specUrl;
+    applied = true;
+  }
+  const defServer = localStorage.getItem(STORAGE_KEYS.defaultServer);
+  if (defServer !== null) {
+    globalServer = defServer;
+    saveServerToStorage();
+    const su = document.getElementById('serverUrl');
+    if (su && (selectedKey || spec)) su.value = defServer.replace(/\/$/, '');
+    applied = true;
+  }
+  const defAuth = JSON.parse(localStorage.getItem(STORAGE_KEYS.defaultAuth) || 'null');
+  if (defAuth && defAuth.type) {
+    globalAuth.type = defAuth.type;
+    saveAuthToStorage();
+    applyAuthToFields();
+    applied = true;
+  }
+  alert(applied ? 'デフォルト設定を適用しました' : '適用するデフォルト設定がありません');
+  closeSettings();
+}
+function clearDefaults() {
+  if (!confirm('デフォルト設定をすべて削除しますか？')) return;
+  localStorage.removeItem(STORAGE_KEYS.defaultSpecUrl);
+  localStorage.removeItem(STORAGE_KEYS.defaultServer);
+  localStorage.removeItem(STORAGE_KEYS.defaultAuth);
+  fillSettingsFromStorage();
+}
+
+/* ===== wiring ===== */
+const specUrlInput = document.getElementById('specUrlInput');
+const btnFetchUrl = document.getElementById('btnFetchUrl');
+btnFetchUrl.addEventListener('click', () => {
+  const url = specUrlInput.value.trim();
+  if (!url) { alert('URL を入力してください'); return; }
+  loadSpecFromURL(url, getSpecAuthHeaders());
+});
+specUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPropagation(); btnFetchUrl.click(); } });
+document.getElementById('btnClearHistory').addEventListener('click', clearHistory);
+document.getElementById('btnSettings').addEventListener('click', openSettings);
+document.getElementById('btnCloseSettings').addEventListener('click', closeSettings);
+settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings(); });
+document.getElementById('btnApplyDefaults').addEventListener('click', applyDefaults);
+document.getElementById('btnClearDefaults').addEventListener('click', clearDefaults);
+document.getElementById('setDefaultSpecUrl').addEventListener('input', e => { try { localStorage.setItem(STORAGE_KEYS.defaultSpecUrl, e.target.value.trim()); } catch (x) {} });
+document.getElementById('setDefaultServer').addEventListener('input', e => { try { localStorage.setItem(STORAGE_KEYS.defaultServer, e.target.value.trim()); } catch (x) {} });
+document.getElementById('setHistoryMax').addEventListener('input', e => { let n = parseInt(e.target.value, 10); if (isNaN(n)) n = 20; n = Math.max(1, Math.min(100, n)); try { localStorage.setItem(STORAGE_KEYS.historyMax, String(n)); } catch (x) {} });
+document.getElementById('setDefaultAuthType').addEventListener('change', e => { try { localStorage.setItem(STORAGE_KEYS.defaultAuth, JSON.stringify({ type: e.target.value })); } catch (x) {} });
+document.getElementById('setSpecAuthType').addEventListener('change', e => { toggleSpecAuth(); saveSpecAuth(); });
+document.getElementById('setSpecBearer').addEventListener('input', saveSpecAuth);
+document.getElementById('setSpecApiKey').addEventListener('input', saveSpecAuth);
+document.getElementById('setSpecBasicUser').addEventListener('input', saveSpecAuth);
+document.getElementById('setSpecBasicPass').addEventListener('input', saveSpecAuth);
+
 /* Keyboard shortcut */
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -1133,6 +1571,7 @@ document.addEventListener('keydown', e => {
 });
 /* Restore persisted state on load */
 restoreState();
+renderHistory();
 </script>
 </body>
 </html>
