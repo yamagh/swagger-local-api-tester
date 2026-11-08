@@ -1763,10 +1763,14 @@ function clearHistory() {
   HistoryStore.clear();
   renderHistory();
 }
-function statusClassFor(s) {
-  if (!s) return 'hist-err';
-  return s < 300 ? 'hist-ok' : (s < 500 ? 'hist-warn' : 'hist-err');
-}
+/* ===== Status: unified status→kind classifier ===== */
+const Status = {
+  /** Classify an HTTP status code → 'ok' | 'warn' | 'err'. */
+  kind(s) {
+    if (!s) return 'err';
+    return s < 300 ? 'ok' : (s < 500 ? 'warn' : 'err');
+  },
+};
 
 function renderResponse({ status, statusText, time, body, headers, error }) {
   document.getElementById('responseEmpty').classList.add('hidden');
@@ -1777,7 +1781,7 @@ function renderResponse({ status, statusText, time, body, headers, error }) {
     statusEl.className = 'status-badge status-err';
   } else {
     statusEl.textContent = status + ' ' + statusText;
-    statusEl.className = 'status-badge ' + (status < 300 ? 'status-ok' : (status < 500 ? 'status-warn' : 'status-err'));
+    statusEl.className = 'status-badge status-' + Status.kind(status);
   }
   document.getElementById('respTime').textContent = time ? time + ' ms' : '';
   document.getElementById('respBody').textContent = error
@@ -1803,7 +1807,7 @@ function renderHistory() {
   list.innerHTML = items.map(e => {
     const time = new Date(e.timestamp).toLocaleTimeString();
     const s = e.response ? e.response.status : 0;
-    const cls = statusClassFor(s);
+    const cls = 'hist-' + Status.kind(s);
     const statusText = (e.response && e.response.error) ? 'ERR' : (String(s) + ((e.response && e.response.statusText) ? ' ' + e.response.statusText : ''));
     const ms = (e.response && e.response.time) ? e.response.time + 'ms' : '';
     return `<div class="history-item" data-id="${escapeHtml(e.id)}">
