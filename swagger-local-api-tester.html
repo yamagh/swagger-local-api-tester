@@ -1594,6 +1594,44 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
+/* ===== RequestRunner: send + normalise + record ===== */
+const RequestRunner = {
+  /**
+   * Send a request and record the result.
+   * @param {object} cfg - { req, ep, server, cur } from currentRequest()
+   * @param {object} deps - { ui, fetch? }
+   * @param {object} deps.ui - { setLoading(bool), showResponse(resp) }
+   * @param {function} [deps.fetch] - injectable fetch (defaults to global)
+   * @returns {Promise<{ok, result?, error?}>}
+   */
+  async run(cfg, { ui, fetch: doFetch = fetch }) {
+    const { req, ep, server, cur } = cfg;
+    const start = performance.now();
+    ui.setLoading(true);
+    try {
+      const resp = await doFetch(req.url, { method: req.method, headers: new Headers(req.headers), body: req.body });
+      const elapsed = Math.round(performance.now() - start);
+      const text = await resp.text();
+      let pretty = text;
+      try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
+      const headersObj = {};
+      resp.headers.forEach((v, k) => { headersObj[k] = v; });
+      const result = { status: resp.status, statusText: resp.statusText, time: elapsed, body: pretty, headers: headersObj };
+      ui.showResponse(result);
+      History.record(cur, { status: result.status, statusText: result.statusText, time: result.time, body: text, headers: headersObj, error: '' });
+      renderHistory();
+      return { ok: true, result };
+    } catch (err) {
+      ui.showResponse({ error: err.message });
+      History.record(cur, { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message });
+      renderHistory();
+      return { ok: false, error: err.message };
+    } finally {
+      ui.setLoading(false);
+    }
+  }
+};
+
 /* Send request */
 document.getElementById('btnSend').addEventListener('click', async () => {
   const cur = currentRequest();
@@ -1607,36 +1645,23 @@ document.getElementById('btnSend').addEventListener('click', async () => {
   const responseContent = document.getElementById('responseContent');
   const responsePending = document.getElementById('responsePending');
 
-  // 実行中状態を表示
-  btn.disabled = true;
-  btn.classList.add('is-loading');
-  label.textContent = '実行中...';
-  responseEmpty.classList.add('hidden');
-  responseContent.classList.add('hidden');
-  responsePending.classList.remove('hidden');
+  const ui = {
+    setLoading(active) {
+      btn.disabled = active;
+      btn.classList.toggle('is-loading', active);
+      label.textContent = active ? '実行中...' : originalLabel;
+      if (active) {
+        responseEmpty.classList.add('hidden');
+        responseContent.classList.add('hidden');
+        responsePending.classList.remove('hidden');
+      } else {
+        responsePending.classList.add('hidden');
+      }
+    },
+    showResponse(resp) { renderResponse(resp); }
+  };
 
-  const start = performance.now();
-  try {
-    const resp = await fetch(req.url, { method: req.method, headers: new Headers(req.headers), body: req.body });
-    const elapsed = Math.round(performance.now() - start);
-    const text = await resp.text();
-    let pretty = text;
-    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch(e){}
-    const headersObj = {};
-    resp.headers.forEach((v, k) => { headersObj[k] = v; });
-    renderResponse({ status: resp.status, statusText: resp.statusText, time: elapsed, body: pretty, headers: headersObj });
-    History.record(cur, { status: resp.status, statusText: resp.statusText, time: elapsed, body: text, headers: headersObj, error: '' });
-    renderHistory();
-  } catch (err) {
-    renderResponse({ error: err.message });
-    History.record(cur, { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message });
-    renderHistory();
-  } finally {
-    btn.disabled = false;
-    btn.classList.remove('is-loading');
-    label.textContent = originalLabel;
-    responsePending.classList.add('hidden');
-  }
+  await RequestRunner.run(cur, { ui });
 });
 /* cURL */
 function buildCurl() {
