@@ -971,6 +971,7 @@ pre.codeblock {
 /* ===== App: selection state owner ===== */
 const App = {
   spec: null,
+  specUrl: null,
   selectedKey: null,
   selectedGroup: null,
   selectedEndpointFilter: null,
@@ -981,6 +982,7 @@ const App = {
   },
   clearAll() {
     this.spec = null;
+    this.specUrl = null;
     this.clear();
   },
 };
@@ -1328,7 +1330,7 @@ const SpecLoader = {
       const resp = await fetch(url, { headers: reqHeaders });
       if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (resp.statusText || ''));
       const json = await resp.json();
-      loadSpec(json);
+      loadSpec(json, url);
       Persistence.set(STORAGE_KEYS.specUrl, url);
       const main = document.getElementById('specUrlInput');
       if (main) main.value = url;
@@ -1431,6 +1433,14 @@ const SpecParser = {
       return (scheme + '://' + host).replace(/\/+$/, '');
     }
     return '';
+  },
+  /**
+   * Origin (scheme + host + port) of a URL string. Pure.
+   * Returns '' when the string is empty or not a parseable absolute URL.
+   */
+  origin(url) {
+    if (!url) return '';
+    try { return new URL(url).origin; } catch (e) { return ''; }
   }
 };
 
@@ -1440,9 +1450,11 @@ const SpecView = {
    * Apply a parsed spec to the UI: state, store, panels, badge, modal.
    * @param {object} json - The spec JSON
    * @param {Array} endpoints - Parsed endpoint descriptors from SpecParser.parse
+   * @param {string|undefined} sourceUrl - URL the spec was fetched from (URL load only); null otherwise
    */
-  render(json, endpoints) {
+  render(json, endpoints, sourceUrl) {
     App.spec = json;
+    App.specUrl = sourceUrl || null;
     saveSpecToStorage(json);
     EndpointStore.clear();
     App.selectedGroup = null;
@@ -1459,18 +1471,21 @@ const SpecView = {
 };
 
 /* loadSpec — thin orchestrator: parse then render */
-function loadSpec(json) {
+function loadSpec(json, sourceUrl) {
   const endpoints = SpecParser.parse(json);
-  SpecView.render(json, endpoints);
+  SpecView.render(json, endpoints, sourceUrl);
 }
 
 /**
  * Server URL for the Server URL field.
- * Priority: spec `servers`/host (OpenAPI 3 / Swagger 2.0), else saved default.
+ * Priority: spec `servers`/host (OpenAPI 3 / Swagger 2.0), then the source URL's
+ * origin (URL load only), else the saved default.
  */
 function resolveServerUrl(spec) {
   const derived = SpecParser.deriveServerUrl(spec || {});
   if (derived) return derived;
+  const fromUrl = SpecParser.origin(App.specUrl);
+  if (fromUrl) return fromUrl;
   return (Persistence.get(STORAGE_KEYS.defaultServer) || '').replace(/\/+$/, '');
 }
 
@@ -1590,7 +1605,7 @@ function selectEndpoint(key) {
   const tagContainer = document.getElementById('detailTags');
   tagContainer.innerHTML = (ep.op.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
 
-  // Server URL: 読み込んだ spec の servers を優先、なければ設定のデフォルト
+  // Server URL: spec の servers / host を優先、無ければ spec の URL の origin、さらに無ければ設定のデフォルト
   document.getElementById('serverUrl').value = resolveServerUrl(App.spec);
 
   // 認証情報: 設定値があれば初期値として利用、なければ空
