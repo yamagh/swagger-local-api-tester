@@ -1355,35 +1355,64 @@ dropZone.addEventListener('drop', e => {
   if (file) SpecLoader.load(file);
 });
 
-/* Parse spec */
-function loadSpec(json) {
-  spec = json;
-  saveSpecToStorage(json);
-  EndpointStore.clear();
-  selectedGroup = null;
-  selectedEndpointFilter = null;
-  const paths = spec.paths || {};
-  const base = spec.basePath || '';
-  Object.entries(paths).forEach(([path, methods]) => {
-    Object.entries(methods).forEach(([method, op]) => {
-      if (typeof op !== 'object' || ['get','post','put','patch','delete','head','options'].indexOf(method) === -1) return;
-      EndpointStore.add({
-        key: EndpointStore.makeKey(method, path),
-        method: method.toUpperCase(),
-        path: (base + path).replace(/\/+/g, '/'),
-        rawPath: path,
-        op,
+/* ===== SpecParser: pure spec JSON → endpoints[] ===== */
+const SpecParser = {
+  HTTP_METHODS: ['get','post','put','patch','delete','head','options'],
+  /**
+   * Parse a spec object into an array of endpoint descriptors.
+   * Pure: no DOM, no state mutation.
+   * @param {object} json - Parsed swagger/OpenAPI JSON
+   * @returns {Array<{key:string, method:string, path:string, rawPath:string, op:object}>}
+   */
+  parse(json) {
+    const paths = (json && json.paths) || {};
+    const base = (json && json.basePath) || '';
+    const endpoints = [];
+    Object.entries(paths).forEach(([path, methods]) => {
+      Object.entries(methods).forEach(([method, op]) => {
+        if (typeof op !== 'object' || this.HTTP_METHODS.indexOf(method) === -1) return;
+        endpoints.push({
+          key: EndpointStore.makeKey(method, path),
+          method: method.toUpperCase(),
+          path: (base + path).replace(/\/+\//, '/'),
+          rawPath: path,
+          op,
+        });
       });
     });
-  });
-  renderList();
-  mainTitle.textContent = spec.info?.title || 'API テスト';
-  mainSub.textContent = `バージョン: ${spec.info?.version || '-'} | エンドポイント: ${EndpointStore.length} 件`;
-  showActiveState();
-  updateSpecBadge();
-  // Close spec loader modal if open
-  if (specLoaderModal.classList.contains('open')) specLoaderModal.classList.remove('open');
+    return endpoints;
+  }
+};
+
+/* ===== SpecView: owns all view effects from a loaded model ===== */
+const SpecView = {
+  /**
+   * Apply a parsed spec to the UI: state, store, panels, badge, modal.
+   * @param {object} json - The spec JSON
+   * @param {Array} endpoints - Parsed endpoint descriptors from SpecParser.parse
+   */
+  render(json, endpoints) {
+    spec = json;
+    saveSpecToStorage(json);
+    EndpointStore.clear();
+    selectedGroup = null;
+    selectedEndpointFilter = null;
+    endpoints.forEach(ep => EndpointStore.add(ep));
+    renderList();
+    mainTitle.textContent = json.info?.title || 'API テスト';
+    mainSub.textContent = `バージョン: ${json.info?.version || '-'} | エンドポイント: ${EndpointStore.length} 件`;
+    showActiveState();
+    updateSpecBadge();
+    if (specLoaderModal.classList.contains('open')) specLoaderModal.classList.remove('open');
+  }
+};
+
+/* loadSpec — thin orchestrator: parse then render */
+function loadSpec(json) {
+  const endpoints = SpecParser.parse(json);
+  SpecView.render(json, endpoints);
 }
+
 
 /* Render list */
 function renderList() {
