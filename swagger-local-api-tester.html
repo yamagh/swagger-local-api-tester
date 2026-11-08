@@ -1756,6 +1756,19 @@ function applyHistoryEntry(entry) {
     }
   }
   updateCurlPreview();
+  renderResponseFromEntry(entry);
+}
+
+// Replay the stored response so the full request AND response are shown on click.
+function renderResponseFromEntry(entry) {
+  const r = entry && entry.response;
+  if (!r) return;
+  // Stored body is the raw text; pretty-print it to match the live display.
+  let body = r.body || '';
+  if (body && !r.error) {
+    try { body = JSON.stringify(JSON.parse(body), null, 2); } catch (e) {}
+  }
+  renderResponse({ status: r.status, statusText: r.statusText, time: r.time, body, headers: r.headers, error: r.error });
 }
 
 /* ===== Feature 4: settings modal (T11/T12) ===== */
