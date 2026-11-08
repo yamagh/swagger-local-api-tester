@@ -984,7 +984,6 @@ const EndpointStore = {
   get length() { return this._list.length; },
   makeKey(method, path) { return method + ' ' + path; },
 };
-let endpoints = EndpointStore._list; // backward-compat reference
 
 /* ===== C2: Auth Materializer ===== */
 const Auth = {
