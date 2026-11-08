@@ -968,11 +968,22 @@ pre.codeblock {
   </div>
 
 <script>
-/* State */
-let spec = null;
-let selectedKey = null;
-let selectedGroup = null;
-let selectedEndpointFilter = null;
+/* ===== App: selection state owner ===== */
+const App = {
+  spec: null,
+  selectedKey: null,
+  selectedGroup: null,
+  selectedEndpointFilter: null,
+  clear() {
+    this.selectedKey = null;
+    this.selectedGroup = null;
+    this.selectedEndpointFilter = null;
+  },
+  clearAll() {
+    this.spec = null;
+    this.clear();
+  },
+};
 
 /* ===== C4: Endpoint Store ===== */
 const EndpointStore = {
@@ -1038,7 +1049,7 @@ const RequestAssembler = {
     let body = undefined;
 
     // Auth materialization
-    const authMat = Auth.materialize(cfg.auth, spec);
+    const authMat = Auth.materialize(cfg.auth, App.spec);
     if (authMat.header) headers.push([authMat.header.name, authMat.header.value]);
 
     // Params
@@ -1186,7 +1197,7 @@ const AuthForm = {
 };
 
 function currentRequest() {
-  const ep = EndpointStore.byKey(selectedKey);
+  const ep = EndpointStore.byKey(App.selectedKey);
   if (!ep) return null;
   const server = document.getElementById('serverUrl').value.trim();
   if (!server) return null;
@@ -1261,17 +1272,14 @@ function showEmptyState() {
 }
 
 function updateSpecBadge() {
-  if (spec) {
-    specBadgeTitle.textContent = spec.info?.title || 'swagger.json';
+  if (App.spec) {
+    specBadgeTitle.textContent = App.spec.info?.title || 'swagger.json';
     specBadgeCount.textContent = '· ' + EndpointStore.length + ' endpoints';
   }
 }
 
 function clearSpec() {
-  spec = null;
-  selectedKey = null;
-  selectedGroup = null;
-  selectedEndpointFilter = null;
+  App.clearAll();
   EndpointStore.clear();
   Persistence.remove(STORAGE_KEYS.spec);
   showEmptyState();
@@ -1392,11 +1400,11 @@ const SpecView = {
    * @param {Array} endpoints - Parsed endpoint descriptors from SpecParser.parse
    */
   render(json, endpoints) {
-    spec = json;
+    App.spec = json;
     saveSpecToStorage(json);
     EndpointStore.clear();
-    selectedGroup = null;
-    selectedEndpointFilter = null;
+    App.selectedGroup = null;
+    App.selectedEndpointFilter = null;
     endpoints.forEach(ep => EndpointStore.add(ep));
     renderList();
     mainTitle.textContent = json.info?.title || 'API テスト';
@@ -1422,7 +1430,7 @@ function renderList() {
     return (ep.key + ' ' + (ep.op.summary || '') + ' ' + (ep.op.description || '')).toLowerCase().includes(q);
   });
 
-  if (!spec) {
+  if (!App.spec) {
     endpointList.innerHTML = `<div class="empty" style="height:auto; padding:2rem 1rem;"><div><div style="font-size:2rem; margin-bottom:.4rem;">📋</div><div style="color:var(--ink-strong); font-weight:700;">ファイルを読み込んでください</div></div></div>`;
     return;
   }
@@ -1443,9 +1451,9 @@ function renderList() {
   let html = '';
   Object.entries(groups).forEach(([tag, eps]) => {
     html += `<div class="endpoint-group">
-      <div class="endpoint-group-title ${tag === selectedGroup ? 'active' : ''}" data-group="${escapeHtml(tag)}">${escapeHtml(tag)}</div>`;
+      <div class="endpoint-group-title ${tag === App.selectedGroup ? 'active' : ''}" data-group="${escapeHtml(tag)}">${escapeHtml(tag)}</div>`;
     eps.forEach(ep => {
-      const active = ep.key === selectedKey ? 'active' : '';
+      const active = ep.key === App.selectedKey ? 'active' : '';
       html += `
         <div class="endpoint-item ${active}" data-key="${escapeHtml(ep.key)}">
           <span class="method m-${ep.method.toLowerCase()}">${ep.method}</span>
@@ -1461,16 +1469,16 @@ function renderList() {
 
   endpointList.querySelectorAll('.endpoint-item').forEach(el => {
     el.addEventListener('click', () => {
-      selectedEndpointFilter = el.dataset.key;
-      selectedGroup = null;
+      App.selectedEndpointFilter = el.dataset.key;
+      App.selectedGroup = null;
       selectEndpoint(el.dataset.key);
     });
   });
   endpointList.querySelectorAll('.endpoint-group-title').forEach(el => {
     el.addEventListener('click', () => {
       const g = el.dataset.group;
-      selectedEndpointFilter = null;
-      selectedGroup = (selectedGroup === g) ? null : g;
+      App.selectedEndpointFilter = null;
+      App.selectedGroup = (App.selectedGroup === g) ? null : g;
       renderList();
       renderHistory();
     });
@@ -1509,7 +1517,7 @@ function groupOfEntry(entry) {
 
 /* Select endpoint */
 function selectEndpoint(key) {
-  selectedKey = key;
+  App.selectedKey = key;
   renderList();
   emptyState.classList.add('hidden');
   testerPanel.classList.remove('hidden');
@@ -1566,7 +1574,7 @@ function schemaToExample(schema) {
   if (schema.default !== undefined) return schema.default;
   if (schema.$ref) {
     const name = schema.$ref.split('/').pop();
-    const def = (spec.components?.schemas || spec.definitions || {})[name];
+    const def = (App.spec?.components?.schemas || App.spec?.definitions || {})[name];
     return schemaToExample(def);
   }
   if (schema.type === 'object' || schema.properties) {
@@ -1724,7 +1732,7 @@ document.getElementById('btnCopyCurl').addEventListener('click', () => {
 });
 
 document.getElementById('btnReset').addEventListener('click', () => {
-  if (selectedKey) selectEndpoint(selectedKey);
+  if (App.selectedKey) selectEndpoint(App.selectedKey);
 });
 
 /* ===== Feature 1: load spec from URL (T5/T13) ===== */
@@ -1734,7 +1742,7 @@ function getSpecAuth() {
 // C2: spec-fetch auth uses Auth.materialize for consistent apikey handling
 function getSpecAuthHeaders() {
   const a = getSpecAuth();
-  const mat = Auth.materialize(a, spec);
+  const mat = Auth.materialize(a, App.spec);
   if (!mat.header && !mat.query) return null;
   const headers = new Headers();
   if (mat.header) headers.append(mat.header.name, mat.header.value);
@@ -1780,11 +1788,11 @@ function renderHistory() {
   if (!list) return;
   const all = HistoryStore.get();
   // C3: filter is a pure predicate via HistoryStore.filter
-  let items = HistoryStore.filter(all, { endpoint: selectedEndpointFilter, group: selectedGroup });
+  let items = HistoryStore.filter(all, { endpoint: App.selectedEndpointFilter, group: App.selectedGroup });
   if (!items.length) {
     let msg = '履歴なし';
-    if (selectedEndpointFilter) msg = 'このエンドポイントの実行履歴はありません';
-    else if (selectedGroup) msg = 'このグループの履歴はありません';
+    if (App.selectedEndpointFilter) msg = 'このエンドポイントの実行履歴はありません';
+    else if (App.selectedGroup) msg = 'このグループの履歴はありません';
     list.innerHTML = '<div class="history-empty">' + msg + '</div>';
     return;
   }
