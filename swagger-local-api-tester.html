@@ -1333,7 +1333,7 @@ function loadSpec(json) {
   showActiveState();
   updateSpecBadge();
   // Close spec loader modal if open
-  if (specLoaderModal.classList.contains('open')) closeSpecLoader();
+  if (specLoaderModal.classList.contains('open')) specLoaderModal.classList.remove('open');
 }
 
 /* Render list */
@@ -1775,6 +1775,24 @@ function renderResponseFromEntry(entry) {
   renderResponse({ status: r.status, statusText: r.statusText, time: r.time, body, headers: r.headers, error: r.error });
 }
 
+/* ===== Modal: common lifecycle ===== */
+const Modal = {
+  /**
+   * Attach standard modal behaviour (backdrop click, Escape) to an element.
+   * @param {Element} el - The modal overlay element
+   * @param {object} hooks - { onOpen?, onClose? }
+   * @returns {{ open: function, close: function, isOpen: function }}
+   */
+  attach(el, { onOpen, onClose } = {}) {
+    const open = () => { onOpen && onOpen(); el.classList.add('open'); };
+    const close = () => { el.classList.remove('open'); onClose && onClose(); };
+    const isOpen = () => el.classList.contains('open');
+    el.addEventListener('click', e => { if (e.target === el) close(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && isOpen()) close(); });
+    return { open, close, isOpen };
+  }
+};
+
 /* ===== Feature 4: settings modal (T11/T12) ===== */
 const settingsModal = document.getElementById('settingsModal');
 
@@ -1809,8 +1827,7 @@ const Settings = {
   },
 };
 
-function openSettings() { Settings.load(); settingsModal.classList.add('open'); }
-function closeSettings() { settingsModal.classList.remove('open'); }
+const settingsModalCtrl = Modal.attach(settingsModal, { onOpen: () => Settings.load() });
 function clearDefaults() {
   if (!confirm('デフォルト設定をすべて削除しますか？')) return;
   Persistence.remove(STORAGE_KEYS.defaultSpecUrl);
@@ -1829,10 +1846,8 @@ btnFetchUrl.addEventListener('click', () => {
 });
 specUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPropagation(); btnFetchUrl.click(); } });
 document.getElementById('btnClearHistory').addEventListener('click', clearHistory);
-document.getElementById('btnSettings').addEventListener('click', openSettings);
-document.getElementById('btnCloseSettings').addEventListener('click', closeSettings);
-settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && settingsModal.classList.contains('open')) closeSettings(); });
+document.getElementById('btnSettings').addEventListener('click', settingsModalCtrl.open);
+document.getElementById('btnCloseSettings').addEventListener('click', settingsModalCtrl.close);
 document.getElementById('btnClearDefaults').addEventListener('click', clearDefaults);
 Settings.wire();
 
@@ -1881,8 +1896,7 @@ function fcLoadFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
-function openFileConverter() { fileConverterModal.classList.add('open'); }
-function closeFileConverter() { fileConverterModal.classList.remove('open'); }
+const fileConverterCtrl = Modal.attach(fileConverterModal);
 
 const fcDropZone = document.getElementById('fcDropZone');
 const fcFileInput = document.getElementById('fcFileInput');
@@ -1900,25 +1914,22 @@ document.getElementById('btnFCCopy').addEventListener('click', () => {
     setTimeout(() => { hint.style.display = 'none'; }, 1500);
   }).catch(() => alert('コピーに失敗しました'));
 });
-document.getElementById('btnFileConverter').addEventListener('click', openFileConverter);
-document.getElementById('btnCloseFileConverter').addEventListener('click', closeFileConverter);
-fileConverterModal.addEventListener('click', e => { if (e.target === fileConverterModal) closeFileConverter(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && fileConverterModal.classList.contains('open')) closeFileConverter(); });
+document.getElementById('btnFileConverter').addEventListener('click', fileConverterCtrl.open);
+document.getElementById('btnCloseFileConverter').addEventListener('click', fileConverterCtrl.close);
 /* ===== Spec loader modal ===== */
-function openSpecLoader() {
-  const slUrlInput = document.getElementById('slUrlInput');
-  slUrlInput.value = Persistence.get(STORAGE_KEYS.specUrl) || '';
-  specLoaderModal.classList.add('open');
-}
-function closeSpecLoader() { specLoaderModal.classList.remove('open'); }
+const specLoaderCtrl = Modal.attach(specLoaderModal, {
+  onOpen() {
+    document.getElementById('slUrlInput').value = Persistence.get(STORAGE_KEYS.specUrl) || '';
+  }
+});
 
 // Spec badge click → open spec loader
 document.getElementById('btnChangeSpec').addEventListener('click', (e) => {
   e.stopPropagation();
-  openSpecLoader();
+  specLoaderCtrl.open();
 });
 // Also allow clicking the badge itself
-specBadge.addEventListener('click', openSpecLoader);
+specBadge.addEventListener('click', specLoaderCtrl.open);
 
 // Spec loader file input
 const slFileInput = document.getElementById('slFileInput');
@@ -1942,15 +1953,13 @@ slUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPro
 document.getElementById('btnClearSpec').addEventListener('click', () => {
   if (confirm('現在の仕様をクリアしますか？')) {
     clearSpec();
-    closeSpecLoader();
+    specLoaderCtrl.close();
   }
 });
 
 // Close buttons
-document.getElementById('btnCloseSpecLoader').addEventListener('click', closeSpecLoader);
-document.getElementById('btnCloseSpecLoader2').addEventListener('click', closeSpecLoader);
-specLoaderModal.addEventListener('click', e => { if (e.target === specLoaderModal) closeSpecLoader(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && specLoaderModal.classList.contains('open')) closeSpecLoader(); });
+document.getElementById('btnCloseSpecLoader').addEventListener('click', specLoaderCtrl.close);
+document.getElementById('btnCloseSpecLoader2').addEventListener('click', specLoaderCtrl.close);
 
 
 /* Keyboard shortcut */
