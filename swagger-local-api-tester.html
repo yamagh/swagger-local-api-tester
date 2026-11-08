@@ -1216,7 +1216,7 @@ function restoreState() {
     } else {
       // spec 未保持時のみ、設定された spec URL から自動取得
       const savedSpecUrl = Persistence.get(STORAGE_KEYS.specUrl);
-      if (savedSpecUrl) loadSpecFromURL(savedSpecUrl, getSpecAuthHeaders());
+      if (savedSpecUrl) SpecLoader.load(savedSpecUrl, { headers: getSpecAuthHeaders() });
     }
     const urlInput = document.getElementById('specUrlInput');
     if (urlInput) urlInput.value = Persistence.get(STORAGE_KEYS.specUrl) || '';
@@ -1280,22 +1280,71 @@ function clearSpec() {
 }
 
 
-/* Upload */
-function handleFile(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
+/* ===== SpecLoader: unified spec loading ===== */
+const SpecLoader = {
+  /**
+   * Load a spec from a File or URL string.
+   * @param {File|string} input
+   * @param {object} [opts] - { headers?, ui? }
+   * @returns {Promise<{ok, json?, error?}>}
+   */
+  async load(input, opts = {}) {
+    if (input instanceof File) return this._fromFile(input);
+    return this._fromURL(input, opts.headers, opts.ui);
+  },
+
+  _fromFile(file) {
+    if (!file) return { ok: false };
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const json = JSON.parse(e.target.result);
+          loadSpec(json);
+          resolve({ ok: true, json });
+        } catch (err) {
+          alert('JSON の解析に失敗しました: ' + err.message);
+          resolve({ ok: false, error: err.message });
+        }
+      };
+      reader.readAsText(file);
+    });
+  },
+
+  async _fromURL(url, headers, ui) {
+    const onLoading = ui && ui.onLoading;
+    onLoading && onLoading(true);
     try {
-      const json = JSON.parse(e.target.result);
+      const reqHeaders = new Headers();
+      if (headers) headers.forEach((v, k) => reqHeaders.append(k, v));
+      const resp = await fetch(url, { headers: reqHeaders });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (resp.statusText || ''));
+      const json = await resp.json();
       loadSpec(json);
+      Persistence.set(STORAGE_KEYS.specUrl, url);
+      const main = document.getElementById('specUrlInput');
+      if (main) main.value = url;
+      return { ok: true, json };
     } catch (err) {
-      alert('JSON の解析に失敗しました: ' + err.message);
+      alert('URL から取得に失敗: ' + err.message);
+      return { ok: false, error: err.message };
+    } finally {
+      onLoading && onLoading(false);
     }
-  };
-  reader.readAsText(file);
+  }
+};
+/** Loading UX adapter for the main URL area. */
+function mainUrlLoadingUI() {
+  const label = document.querySelector('.url-area-label');
+  const btn = document.getElementById('btnFetchUrl');
+  const original = label ? label.textContent : '';
+  return { onLoading(active) {
+    if (label) label.textContent = active ? '読み込み中...' : original;
+    if (btn) btn.disabled = active;
+  }};
 }
 
-fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+fileInput.addEventListener('change', e => SpecLoader.load(e.target.files[0]));
 
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -1303,7 +1352,7 @@ dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
-  if (file) handleFile(file);
+  if (file) SpecLoader.load(file);
 });
 
 /* Parse spec */
@@ -1637,29 +1686,6 @@ function getSpecAuthHeaders() {
   if (mat.header) headers.append(mat.header.name, mat.header.value);
   return headers;
 }
-async function loadSpecFromURL(url, headers) {
-  const input = document.getElementById('specUrlInput');
-  const btn = document.getElementById('btnFetchUrl');
-  const label = document.querySelector('.url-area-label');
-  const original = label ? label.textContent : '';
-  if (label) label.textContent = '読み込み中...';
-  if (btn) btn.disabled = true;
-  try {
-    const reqHeaders = new Headers();
-    if (headers) headers.forEach((v, k) => reqHeaders.append(k, v));
-    const resp = await fetch(url, { headers: reqHeaders });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (resp.statusText || ''));
-    const json = await resp.json();
-    loadSpec(json);
-    Persistence.set(STORAGE_KEYS.specUrl, url);
-    if (input) input.value = url;
-  } catch (err) {
-    alert('URL から取得に失敗: ' + err.message);
-  } finally {
-    if (label) label.textContent = original;
-    if (btn) btn.disabled = false;
-  }
-}
 
 /* ===== Feature 2/3: execution history (T7/T9/T10) ===== */
 function uuid() {
@@ -1842,7 +1868,7 @@ const btnFetchUrl = document.getElementById('btnFetchUrl');
 btnFetchUrl.addEventListener('click', () => {
   const url = specUrlInput.value.trim();
   if (!url) { alert('URL を入力してください'); return; }
-  loadSpecFromURL(url, getSpecAuthHeaders());
+  SpecLoader.load(url, { headers: getSpecAuthHeaders(), ui: mainUrlLoadingUI() });
 });
 specUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPropagation(); btnFetchUrl.click(); } });
 document.getElementById('btnClearHistory').addEventListener('click', clearHistory);
@@ -1934,10 +1960,10 @@ specBadge.addEventListener('click', specLoaderCtrl.open);
 // Spec loader file input
 const slFileInput = document.getElementById('slFileInput');
 const slDropZone = document.getElementById('slDropZone');
-slFileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+slFileInput.addEventListener('change', e => SpecLoader.load(e.target.files[0]));
 slDropZone.addEventListener('dragover', e => { e.preventDefault(); slDropZone.classList.add('dragover'); });
 slDropZone.addEventListener('dragleave', () => slDropZone.classList.remove('dragover'));
-slDropZone.addEventListener('drop', e => { e.preventDefault(); slDropZone.classList.remove('dragover'); const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
+slDropZone.addEventListener('drop', e => { e.preventDefault(); slDropZone.classList.remove('dragover'); const f = e.dataTransfer.files[0]; if (f) SpecLoader.load(f); });
 
 // Spec loader URL input
 const slUrlInput = document.getElementById('slUrlInput');
@@ -1945,7 +1971,7 @@ const slBtnFetch = document.getElementById('slBtnFetch');
 slBtnFetch.addEventListener('click', () => {
   const url = slUrlInput.value.trim();
   if (!url) { alert('URL を入力してください'); return; }
-  loadSpecFromURL(url, getSpecAuthHeaders());
+  SpecLoader.load(url, { headers: getSpecAuthHeaders() });
 });
 slUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPropagation(); slBtnFetch.click(); } });
 
