@@ -1656,14 +1656,14 @@ document.querySelectorAll('.tab').forEach(tab => {
 const RequestRunner = {
   /**
    * Send a request and record the result.
-   * @param {object} cfg - { req, ep, server, cur } from currentRequest()
+   * @param {object} cfg - the currentRequest() result: { req, ep, server, params, auth, bodyText }
    * @param {object} deps - { ui, fetch? }
    * @param {object} deps.ui - { setLoading(bool), showResponse(resp) }
    * @param {function} [deps.fetch] - injectable fetch (defaults to global)
    * @returns {Promise<{ok, result?, error?}>}
    */
   async run(cfg, { ui, fetch: doFetch = fetch }) {
-    const { req, ep, server, cur } = cfg;
+    const { req } = cfg;
     const start = performance.now();
     ui.setLoading(true);
     try {
@@ -1676,12 +1676,12 @@ const RequestRunner = {
       resp.headers.forEach((v, k) => { headersObj[k] = v; });
       const result = { status: resp.status, statusText: resp.statusText, time: elapsed, body: pretty, headers: headersObj };
       ui.showResponse(result);
-      History.record(cur, { status: result.status, statusText: result.statusText, time: result.time, body: text, headers: headersObj, error: '' });
+      History.record(cfg, { status: result.status, statusText: result.statusText, time: result.time, body: text, headers: headersObj, error: '' });
       renderHistory();
       return { ok: true, result };
     } catch (err) {
       ui.showResponse({ error: err.message });
-      History.record(cur, { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message });
+      History.record(cfg, { status: 0, statusText: 'Error', time: 0, body: '', headers: {}, error: err.message });
       renderHistory();
       return { ok: false, error: err.message };
     } finally {
