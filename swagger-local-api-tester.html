@@ -1341,15 +1341,32 @@ const SpecLoader = {
     }
   }
 };
-/** Loading UX adapter for the main URL area. */
+/* ===== LoadingUI: one factory for "show spinner on a region" ===== */
+const LoadingUI = {
+  /**
+   * Create a loading-state controller for a button + label.
+   * @param {object} cfg - { btn, label, busyText?, extra? }
+   * @returns {{ onLoading: function, setLoading: function }}
+   */
+  for(cfg) {
+    const { btn, label, busyText = '読み込み中...', extra } = cfg || {};
+    const original = label ? label.textContent : '';
+    const toggle = (active) => {
+      if (label) label.textContent = active ? busyText : original;
+      if (btn) btn.disabled = active;
+      extra && extra(active);
+    };
+    return { onLoading: toggle, setLoading: toggle };
+  },
+};
+
+/** Loading UX adapter for the main URL area (delegates to LoadingUI.for). */
 function mainUrlLoadingUI() {
-  const label = document.querySelector('.url-area-label');
-  const btn = document.getElementById('btnFetchUrl');
-  const original = label ? label.textContent : '';
-  return { onLoading(active) {
-    if (label) label.textContent = active ? '読み込み中...' : original;
-    if (btn) btn.disabled = active;
-  }};
+  return LoadingUI.for({
+    btn: document.getElementById('btnFetchUrl'),
+    label: document.querySelector('.url-area-label'),
+    busyText: '読み込み中...',
+  });
 }
 
 fileInput.addEventListener('change', e => SpecLoader.load(e.target.files[0]));
@@ -1681,16 +1698,16 @@ document.getElementById('btnSend').addEventListener('click', async () => {
 
   const btn = document.getElementById('btnSend');
   const label = btn.querySelector('.btn-label');
-  const originalLabel = label.textContent;
   const responseEmpty = document.getElementById('responseEmpty');
   const responseContent = document.getElementById('responseContent');
   const responsePending = document.getElementById('responsePending');
 
-  const ui = {
-    setLoading(active) {
-      btn.disabled = active;
+  const loading = LoadingUI.for({
+    btn,
+    label,
+    busyText: '実行中...',
+    extra(active) {
       btn.classList.toggle('is-loading', active);
-      label.textContent = active ? '実行中...' : originalLabel;
       if (active) {
         responseEmpty.classList.add('hidden');
         responseContent.classList.add('hidden');
@@ -1699,6 +1716,10 @@ document.getElementById('btnSend').addEventListener('click', async () => {
         responsePending.classList.add('hidden');
       }
     },
+  });
+
+  const ui = {
+    setLoading: loading.setLoading,
     showResponse(resp) { renderResponse(resp); }
   };
 
