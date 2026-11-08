@@ -1406,6 +1406,31 @@ const SpecParser = {
       });
     });
     return endpoints;
+  },
+  /**
+   * Derive a base server URL from the spec. Pure.
+   * OpenAPI 3 `servers[0]` (variables substituted with their defaults) wins;
+   * otherwise Swagger 2.0 `schemes[0]://host`. Returns '' when unspecified.
+   */
+  deriveServerUrl(json) {
+    const servers = json && json.servers;
+    if (Array.isArray(servers) && servers.length) {
+      const s = servers[0] || {};
+      let url = s.url || '';
+      if (s.variables) {
+        url = url.replace(/\{([A-Za-z0-9_-]+)\}/g, (m, name) => {
+          const v = s.variables[name];
+          return (v && v.default != null) ? String(v.default) : '';
+        });
+      }
+      return url.replace(/\/+$/, '');
+    }
+    const host = json && json.host;
+    if (host) {
+      const scheme = (json.schemes && json.schemes[0]) || 'https';
+      return (scheme + '://' + host).replace(/\/+$/, '');
+    }
+    return '';
   }
 };
 
@@ -1427,6 +1452,7 @@ const SpecView = {
     mainTitle.textContent = json.info?.title || 'API テスト';
     mainSub.textContent = `バージョン: ${json.info?.version || '-'} | エンドポイント: ${EndpointStore.length} 件`;
     showActiveState();
+    document.getElementById('serverUrl').value = resolveServerUrl(json);
     updateSpecBadge();
     if (specLoaderModal.classList.contains('open')) specLoaderModal.classList.remove('open');
   }
@@ -1438,6 +1464,15 @@ function loadSpec(json) {
   SpecView.render(json, endpoints);
 }
 
+/**
+ * Server URL for the Server URL field.
+ * Priority: spec `servers`/host (OpenAPI 3 / Swagger 2.0), else saved default.
+ */
+function resolveServerUrl(spec) {
+  const derived = SpecParser.deriveServerUrl(spec || {});
+  if (derived) return derived;
+  return (Persistence.get(STORAGE_KEYS.defaultServer) || '').replace(/\/+$/, '');
+}
 
 /* Render list */
 function renderList() {
@@ -1555,8 +1590,8 @@ function selectEndpoint(key) {
   const tagContainer = document.getElementById('detailTags');
   tagContainer.innerHTML = (ep.op.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
 
-  // Server URL: 設定値があれば初期値として利用、なければ空
-  document.getElementById('serverUrl').value = (Persistence.get(STORAGE_KEYS.defaultServer) || '').replace(/\/$/, '');
+  // Server URL: 読み込んだ spec の servers を優先、なければ設定のデフォルト
+  document.getElementById('serverUrl').value = resolveServerUrl(App.spec);
 
   // 認証情報: 設定値があれば初期値として利用、なければ空
   AuthForm.write('main', Persistence.getJSON(STORAGE_KEYS.defaultAuth) || {});
