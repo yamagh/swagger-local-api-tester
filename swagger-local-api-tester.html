@@ -1467,25 +1467,29 @@ function renderList() {
   });
   endpointList.innerHTML = html;
 
-  endpointList.querySelectorAll('.endpoint-item').forEach(el => {
-    el.addEventListener('click', () => {
-      App.selectedEndpointFilter = el.dataset.key;
-      App.selectedGroup = null;
-      selectEndpoint(el.dataset.key);
-    });
-  });
-  endpointList.querySelectorAll('.endpoint-group-title').forEach(el => {
-    el.addEventListener('click', () => {
-      const g = el.dataset.group;
-      App.selectedEndpointFilter = null;
-      App.selectedGroup = (App.selectedGroup === g) ? null : g;
-      renderList();
-      renderHistory();
-    });
-  });
 }
 
+
 searchInput.addEventListener('input', renderList);
+
+/* Delegated click handling for endpoint list (survives all re-renders) */
+endpointList.addEventListener('click', e => {
+  const item = e.target.closest('.endpoint-item');
+  if (item) {
+    App.selectedEndpointFilter = item.dataset.key;
+    App.selectedGroup = null;
+    selectEndpoint(item.dataset.key);
+    return;
+  }
+  const group = e.target.closest('.endpoint-group-title');
+  if (group) {
+    const g = group.dataset.group;
+    App.selectedEndpointFilter = null;
+    App.selectedGroup = (App.selectedGroup === g) ? null : g;
+    renderList();
+    renderHistory();
+  }
+});
 
 function escapeHtml(t) {
   return String(t).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -1812,11 +1816,16 @@ function renderHistory() {
       <div class="hist-meta">${time} · ${escapeHtml(e.serverUrl || '')}</div>
     </div>`;
   }).join('');
-  list.querySelectorAll('.history-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const entry = all.find(x => x.id === el.dataset.id);
-      if (entry) applyHistoryEntry(entry);
-    });
+}
+
+/* Delegated click handling for history list (survives all re-renders) */
+const historyListEl = document.getElementById('historyList');
+if (historyListEl) {
+  historyListEl.addEventListener('click', e => {
+    const item = e.target.closest('.history-item');
+    if (!item) return;
+    const entry = HistoryStore.get().find(x => x.id === item.dataset.id);
+    if (entry) applyHistoryEntry(entry);
   });
 }
 // C3: applyHistoryEntry — DOM seam only; endpoint resolution is in HistoryReplay
