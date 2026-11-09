@@ -542,12 +542,13 @@ pre.codeblock {
 .history-item:hover { background: var(--surface-hover); border-color: var(--border); }
 .history-line { display: flex; align-items: center; gap: .5rem; font-size: .82rem; }
 .history-path { color: var(--ink-strong); word-break: break-all; flex: 1; min-width: 0; }
-.hist-status { font-family: var(--font-mono); font-weight: 700; font-size: .78rem; }
-.hist-ok { color: var(--success); }
-.hist-warn { color: var(--warning); }
-.hist-err { color: var(--danger); }
-.hist-time { font-size: .74rem; color: var(--muted); white-space: nowrap; }
-.hist-meta { font-size: .72rem; color: var(--muted); margin-top: .2rem; word-break: break-all; }
+.hist-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .5rem; font-size: .72rem; color: var(--muted); margin-top: .3rem; }
+.hist-status { font-family: var(--font-mono); font-weight: 700; font-size: .7rem; padding: .05rem .4rem; border-radius: 4px; border: 1px solid transparent; white-space: nowrap; }
+.hist-ok { color: var(--success); background: var(--success-weak); border-color: var(--success-weak); }
+.hist-warn { color: var(--warning); background: var(--warning-weak); border-color: var(--warning-weak); }
+.hist-err { color: var(--danger); background: var(--danger-weak); border-color: var(--danger-weak); }
+.hist-reason { color: var(--muted); word-break: break-all; }
+.hist-when { color: var(--muted); word-break: break-all; }
 
 /* Spec badge (sidebar, active state) */
 .spec-badge {
@@ -1877,18 +1878,24 @@ function renderHistory() {
   }
   list.innerHTML = items.map(e => {
     const time = new Date(e.timestamp).toLocaleTimeString();
-    const s = e.response ? e.response.status : 0;
-    const cls = 'hist-' + Status.kind(s);
-    const statusText = (e.response && e.response.error) ? 'ERR' : (String(s) + ((e.response && e.response.statusText) ? ' ' + e.response.statusText : ''));
-    const ms = (e.response && e.response.time) ? e.response.time + 'ms' : '';
+    const resp = e.response;
+    const isError = !!(resp && resp.error);
+    const s = resp ? resp.status : 0;
+    const cls = 'hist-' + (isError ? 'err' : Status.kind(s));
+    const code = isError ? 'ERR' : String(s);
+    const reason = isError ? (resp.error || '') : (resp ? (resp.statusText || '') : '');
+    const ms = (resp && resp.time) ? resp.time + 'ms' : '';
+    const when = [ms, time].filter(Boolean).join(' · ');
     return `<div class="history-item" data-id="${escapeHtml(e.id)}">
       <div class="history-line">
         <span class="method m-${e.method.toLowerCase()}">${escapeHtml(e.method)}</span>
         <span class="history-path">${escapeHtml(e.path)}</span>
-        <span class="hist-status ${cls}">${escapeHtml(String(statusText))}</span>
-        ${ms ? `<span class="hist-time">${ms}</span>` : ''}
       </div>
-      <div class="hist-meta">${time} · ${escapeHtml(e.serverUrl || '')}</div>
+      <div class="hist-meta">
+        <span class="hist-status ${cls}">${escapeHtml(code)}</span>
+        ${reason ? `<span class="hist-reason">${escapeHtml(reason)}</span>` : ''}
+        <span class="hist-when">${escapeHtml(when)}</span>
+      </div>
     </div>`;
   }).join('');
 }
